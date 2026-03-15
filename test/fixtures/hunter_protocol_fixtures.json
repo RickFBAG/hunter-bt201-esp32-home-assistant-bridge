@@ -1,0 +1,27 @@
+{
+  "manual_packets": {
+    "prepare_zone1": "01:00:01:02:00:01:02:00:0a:00:00:00",
+    "arm_zone1": "01:00:01:02:01:01:02:00:0a:00:00:00",
+    "prepare_zone2": "01:00:02:02:00:02:02:00:0a:00:00:00",
+    "arm_zone2": "01:00:02:02:01:02:02:00:0a:00:00:00",
+    "stop": "01:00:02:02:00:02:02:00:0a:00:00:00"
+  },
+  "duration_packets": {
+    "60_seconds": "04:01:7f:ff:ff:ff:ff:00:ff:ff:ff:00:01:00:00:1e:00",
+    "35_seconds": "04:01:7f:ff:ff:ff:ff:00:ff:ff:ff:00:00:23:00:1e:00"
+  },
+  "schedule_blocks": {
+    "zone1_timer_ff87": "08:07:00:ff:ff:ff:ff:ff:ff:ff:ff:ff:01:05:1e",
+    "zone2_cycling_ff8d": "09:0b:00:0a:1e:00:ff:ff:ff:ff:ff:ff:00:00:0a:00:00:07"
+  },
+  "config_snapshots": {
+    "zone1_timer_before_ff86": "00:01:4c:ff:ff:ff:01:4c:ff:ff:ff:00:00:02:00:1e:00",
+    "zone1_timer_after_ff86": "01:01:01:ff:ff:ff:01:4c:ff:ff:ff:00:00:02:00:1e:00",
+    "zone2_cycling_before_ff8b": "02:01:7f:ff:ff:ff:01:01:ff:ff:ff:00:00:23:00:1e:00",
+    "zone2_cycling_after_ff8b": "02:01:7f:ff:ff:ff:01:7f:ff:ff:ff:00:00:23:00:1e:00"
+  },
+  "passcode": {
+    "4931_ff81_write": "04:09:03:01"
+  }
+}
+

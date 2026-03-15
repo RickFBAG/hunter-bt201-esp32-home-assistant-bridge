@@ -1,0 +1,6 @@
+.pio/
+.vscode/
+bridge_secrets.h
+include/bridge_secrets.h
+compile_commands.json
+
