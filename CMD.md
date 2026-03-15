@@ -201,3 +201,4 @@ Acceptance criteria for the first usable version:
 - The solution fails safe on disconnects, timeouts, and unexpected errors
 - The solution is documented well enough that I can maintain it later
 
+Small note: Do all of this in Platform IO and before you do anything, start in a different branch.
