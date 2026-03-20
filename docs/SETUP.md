@@ -62,7 +62,18 @@ pio device monitor -b 115200
    - bridge health sensor
    - a passive AMOLED status screen that stays asleep until a hardware button wakes it
 
-## 5. First Validation
+## 5. Recommended HA UX Layer
+
+For the easiest daily control flow, copy the files from [home_assistant/README.md](/c:/Users/rick_/Desktop/Git/ESP32HunterBTT201Bridge/home_assistant/README.md).
+
+This adds:
+
+- a simple `Zone 1 -> Zone 2 -> repeat` program model
+- a mobile-friendly dashboard
+- a Home Assistant-owned weekly schedule with weekday toggles and one start time
+- an advanced view that still keeps the raw native Hunter timer/cycling entities available
+
+## 6. First Validation
 
 1. Confirm the bridge appears in Home Assistant.
 2. Confirm battery percentage is visible.
@@ -72,9 +83,10 @@ pio device monitor -b 115200
 6. Press stop and confirm it returns to `idle`.
 7. Repeat for Zone 2.
 
-## 6. Schedule Notes
+## 7. Schedule Notes
 
 - Schedules are staged locally in the bridge draft state.
 - A schedule is only pushed to the Hunter device when you press the matching `Apply` button.
 - `FF84` time sync is intentionally not written in v1.
 - If a schedule write or read-back does not match, the apply status sensor reports failure and the firmware does not pretend success.
+- The optional Home Assistant UX layer uses a Home Assistant weekday-plus-time schedule for the main everyday program flow and leaves the native Hunter schedules as advanced controls.

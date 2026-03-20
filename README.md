@@ -68,6 +68,7 @@ Known limitations:
 3. Build and flash the `waveshare_esp32_c6_touch` PlatformIO environment
 4. Add the MQTT integration in Home Assistant
 5. Wait for MQTT discovery to create the device and entities
+6. Copy the optional Home Assistant UX package/dashboard from `home_assistant/` if you want the simplified mobile control flow
 
 PlatformIO commands:
 
@@ -93,12 +94,14 @@ The onboard AMOLED is intentionally passive.
 - [Setup](docs/SETUP.md)
 - [Protocol Mapping](docs/PROTOCOL_MAPPING.md)
 - [Test Plan](docs/TEST_PLAN.md)
+- [Home Assistant UX Layer](home_assistant/README.md)
 
 ## Repository Layout
 
 - `src/` firmware implementation
 - `include/` public headers and config scaffolding
 - `components/esp_lcd_sh8601/` vendored AMOLED panel driver
+- `home_assistant/` optional package and dashboard files for the recommended HA UX
 - `docs/` architecture, setup, protocol mapping, and test notes
 - `test/` protocol fixture validation
 

@@ -1,0 +1,265 @@
+title: Hunter BTT201
+views:
+  - title: Control
+    path: hunter-btt201
+    icon: mdi:sprinkler-variant
+    type: sections
+    max_columns: 3
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Run Now
+            icon: mdi:play-circle
+          - type: grid
+            columns: 2
+            square: false
+            cards:
+              - type: button
+                name: Run Program
+                icon: mdi:play
+                tap_action:
+                  action: call-service
+                  service: script.turn_on
+                  target:
+                    entity_id: script.hunter_btt201_run_program
+              - type: button
+                name: Stop All
+                icon: mdi:stop-circle
+                tap_action:
+                  action: call-service
+                  service: script.turn_on
+                  target:
+                    entity_id: script.hunter_btt201_stop_all
+              - type: button
+                name: Zone 1 Now
+                icon: mdi:water
+                tap_action:
+                  action: call-service
+                  service: script.turn_on
+                  target:
+                    entity_id: script.hunter_btt201_run_zone1_now
+              - type: button
+                name: Zone 2 Now
+                icon: mdi:water-outline
+                tap_action:
+                  action: call-service
+                  service: script.turn_on
+                  target:
+                    entity_id: script.hunter_btt201_run_zone2_now
+          - type: entities
+            title: Live Status
+            show_header_toggle: false
+            entities:
+              - entity: sensor.hunter_btt201_zone_1_state
+                name: Zone 1 state
+              - entity: sensor.hunter_btt201_zone_1_remaining
+                name: Zone 1 remaining
+              - entity: sensor.hunter_btt201_zone_2_state
+                name: Zone 2 state
+              - entity: sensor.hunter_btt201_zone_2_remaining
+                name: Zone 2 remaining
+              - entity: sensor.hunter_btt201_bridge_health
+                name: Bridge health
+              - entity: sensor.hunter_btt201_hunter_battery
+                name: Hunter battery
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Program
+            icon: mdi:playlist-play
+          - type: entities
+            title: Current Program
+            show_header_toggle: false
+            entities:
+              - entity: input_number.hunter_btt201_zone1_minutes
+                name: Zone 1 minutes
+              - entity: input_number.hunter_btt201_zone2_minutes
+                name: Zone 2 minutes
+              - entity: input_number.hunter_btt201_repeat_count
+                name: Repeat count
+              - entity: input_number.hunter_btt201_pause_seconds
+                name: Pause between zones
+              - entity: sensor.hunter_btt201_program_summary
+                name: Will run
+              - entity: binary_sensor.hunter_btt201_program_running
+                name: Running now
+              - entity: sensor.hunter_btt201_last_error
+                name: Last error
+          - type: grid
+            columns: 3
+            square: false
+            cards:
+              - type: button
+                name: 5 min
+                icon: mdi:timer-outline
+                tap_action:
+                  action: call-service
+                  service: script.turn_on
+                  target:
+                    entity_id: script.hunter_btt201_set_preset_5_5
+              - type: button
+                name: 15 min
+                icon: mdi:timer-outline
+                tap_action:
+                  action: call-service
+                  service: script.turn_on
+                  target:
+                    entity_id: script.hunter_btt201_set_preset_15_15
+              - type: button
+                name: 30 min
+                icon: mdi:timer-outline
+                tap_action:
+                  action: call-service
+                  service: script.turn_on
+                  target:
+                    entity_id: script.hunter_btt201_set_preset_30_30
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Weekly Schedule
+            icon: mdi:calendar-clock
+          - type: entities
+            title: Schedule Setup
+            show_header_toggle: false
+            entities:
+              - entity: input_boolean.hunter_btt201_schedule_enabled
+                name: Enabled
+              - entity: input_datetime.hunter_btt201_schedule_start_time
+                name: Start time
+              - entity: sensor.hunter_btt201_schedule_summary
+                name: Summary
+              - entity: sensor.hunter_btt201_next_scheduled_run
+                name: Next run
+          - type: grid
+            columns: 3
+            square: false
+            cards:
+              - type: tile
+                entity: input_boolean.hunter_btt201_schedule_monday
+                name: Mon
+              - type: tile
+                entity: input_boolean.hunter_btt201_schedule_tuesday
+                name: Tue
+              - type: tile
+                entity: input_boolean.hunter_btt201_schedule_wednesday
+                name: Wed
+              - type: tile
+                entity: input_boolean.hunter_btt201_schedule_thursday
+                name: Thu
+              - type: tile
+                entity: input_boolean.hunter_btt201_schedule_friday
+                name: Fri
+              - type: tile
+                entity: input_boolean.hunter_btt201_schedule_saturday
+                name: Sat
+              - type: tile
+                entity: input_boolean.hunter_btt201_schedule_sunday
+                name: Sun
+
+  - title: Advanced
+    path: hunter-btt201-advanced
+    icon: mdi:tune
+    type: sections
+    max_columns: 3
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Manual Bridge Controls
+            icon: mdi:console-network
+          - type: entities
+            title: Zone 1 Raw Controls
+            show_header_toggle: false
+            entities:
+              - entity: button.hunter_bridge_zone1_start
+              - entity: button.hunter_bridge_zone1_stop
+              - entity: number.hunter_bridge_zone1_manual_duration
+              - entity: sensor.hunter_bridge_zone1_state
+              - entity: sensor.hunter_bridge_zone1_remaining
+              - entity: sensor.hunter_bridge_zone1_active_schedule
+          - type: entities
+            title: Zone 2 Raw Controls
+            show_header_toggle: false
+            entities:
+              - entity: button.hunter_bridge_zone2_start
+              - entity: button.hunter_bridge_zone2_stop
+              - entity: number.hunter_bridge_zone2_manual_duration
+              - entity: sensor.hunter_bridge_zone2_state
+              - entity: sensor.hunter_bridge_zone2_remaining
+              - entity: sensor.hunter_bridge_zone2_active_schedule
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Native Hunter Timer Schedules
+            icon: mdi:calendar-range
+          - type: entities
+            title: Zone 1 Timer
+            show_header_toggle: false
+            entities:
+              - entity: switch.hunter_bridge_zone1_timer_enabled
+              - entity: text.hunter_bridge_zone1_timer_days
+              - entity: text.hunter_bridge_zone1_timer_start1
+              - entity: text.hunter_bridge_zone1_timer_start2
+              - entity: text.hunter_bridge_zone1_timer_start3
+              - entity: text.hunter_bridge_zone1_timer_start4
+              - entity: number.hunter_bridge_zone1_timer_run
+              - entity: button.hunter_bridge_zone1_timer_apply
+              - entity: sensor.hunter_bridge_zone1_timer_apply_status
+          - type: entities
+            title: Zone 2 Timer
+            show_header_toggle: false
+            entities:
+              - entity: switch.hunter_bridge_zone2_timer_enabled
+              - entity: text.hunter_bridge_zone2_timer_days
+              - entity: text.hunter_bridge_zone2_timer_start1
+              - entity: text.hunter_bridge_zone2_timer_start2
+              - entity: text.hunter_bridge_zone2_timer_start3
+              - entity: text.hunter_bridge_zone2_timer_start4
+              - entity: number.hunter_bridge_zone2_timer_run
+              - entity: button.hunter_bridge_zone2_timer_apply
+              - entity: sensor.hunter_bridge_zone2_timer_apply_status
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Native Hunter Cycling Schedules
+            icon: mdi:repeat-variant
+          - type: entities
+            title: Zone 1 Cycling
+            show_header_toggle: false
+            entities:
+              - entity: switch.hunter_bridge_zone1_cycling_enabled
+              - entity: text.hunter_bridge_zone1_cycling_days
+              - entity: text.hunter_bridge_zone1_cycling_start1
+              - entity: text.hunter_bridge_zone1_cycling_end1
+              - entity: text.hunter_bridge_zone1_cycling_start2
+              - entity: text.hunter_bridge_zone1_cycling_end2
+              - entity: number.hunter_bridge_zone1_cycling_run
+              - entity: number.hunter_bridge_zone1_cycling_soak
+              - entity: button.hunter_bridge_zone1_cycling_apply
+              - entity: sensor.hunter_bridge_zone1_cycling_apply_status
+          - type: entities
+            title: Zone 2 Cycling
+            show_header_toggle: false
+            entities:
+              - entity: switch.hunter_bridge_zone2_cycling_enabled
+              - entity: text.hunter_bridge_zone2_cycling_days
+              - entity: text.hunter_bridge_zone2_cycling_start1
+              - entity: text.hunter_bridge_zone2_cycling_end1
+              - entity: text.hunter_bridge_zone2_cycling_start2
+              - entity: text.hunter_bridge_zone2_cycling_end2
+              - entity: number.hunter_bridge_zone2_cycling_run
+              - entity: number.hunter_bridge_zone2_cycling_soak
+              - entity: button.hunter_bridge_zone2_cycling_apply
+              - entity: sensor.hunter_bridge_zone2_cycling_apply_status
+          - type: entities
+            title: Diagnostics
+            show_header_toggle: false
+            entities:
+              - entity: sensor.hunter_bridge_bridge_health
+              - entity: sensor.hunter_bridge_battery_percent
+              - entity: button.hunter_bridge_refresh_battery

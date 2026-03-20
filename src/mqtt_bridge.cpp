@@ -93,6 +93,17 @@ std::string unique_id(const std::string &device_id, const std::string &component
     return device_id + "_" + component_id;
 }
 
+const char *zone_label(const ZoneId zone) {
+    switch (zone) {
+        case ZoneId::Zone1:
+            return "Zone 1";
+        case ZoneId::Zone2:
+            return "Zone 2";
+        default:
+            return "Zone";
+    }
+}
+
 void add_device_block(cJSON *root) {
     auto *device = cJSON_AddObjectToObject(root, "device");
     cJSON_AddStringToObject(device, "name", config::kDeviceName);
@@ -124,14 +135,20 @@ void add_component_common(cJSON *component, const std::string &name, const std::
     cJSON_AddStringToObject(component, "unique_id", unique_id_value.c_str());
 }
 
+std::string default_entity_id(const char *domain, const std::string &device_id, const std::string &component_id) {
+    return std::string(domain) + "." + unique_id(device_id, component_id);
+}
+
 void add_sensor_component(
     cJSON *component,
     const std::string &name,
     const std::string &unique_id_value,
+    const std::string &default_entity_id_value,
     const std::string &state_topic,
     const std::string &attributes_topic,
     const char *unit = nullptr) {
     add_component_common(component, name, unique_id_value);
+    cJSON_AddStringToObject(component, "default_entity_id", default_entity_id_value.c_str());
     cJSON_AddStringToObject(component, "state_topic", state_topic.c_str());
     if (!attributes_topic.empty()) {
         cJSON_AddStringToObject(component, "json_attributes_topic", attributes_topic.c_str());
@@ -145,8 +162,10 @@ void add_button_component(
     cJSON *component,
     const std::string &name,
     const std::string &unique_id_value,
+    const std::string &default_entity_id_value,
     const std::string &command_topic) {
     add_component_common(component, name, unique_id_value);
+    cJSON_AddStringToObject(component, "default_entity_id", default_entity_id_value.c_str());
     cJSON_AddStringToObject(component, "command_topic", command_topic.c_str());
     cJSON_AddStringToObject(component, "payload_press", "PRESS");
 }
@@ -155,6 +174,7 @@ void add_number_component(
     cJSON *component,
     const std::string &name,
     const std::string &unique_id_value,
+    const std::string &default_entity_id_value,
     const std::string &state_topic,
     const std::string &command_topic,
     int min_value,
@@ -162,6 +182,7 @@ void add_number_component(
     int step,
     const char *unit = nullptr) {
     add_component_common(component, name, unique_id_value);
+    cJSON_AddStringToObject(component, "default_entity_id", default_entity_id_value.c_str());
     cJSON_AddStringToObject(component, "state_topic", state_topic.c_str());
     cJSON_AddStringToObject(component, "command_topic", command_topic.c_str());
     cJSON_AddStringToObject(component, "mode", "box");
@@ -177,10 +198,12 @@ void add_text_component(
     cJSON *component,
     const std::string &name,
     const std::string &unique_id_value,
+    const std::string &default_entity_id_value,
     const std::string &state_topic,
     const std::string &command_topic,
     const char *pattern = nullptr) {
     add_component_common(component, name, unique_id_value);
+    cJSON_AddStringToObject(component, "default_entity_id", default_entity_id_value.c_str());
     cJSON_AddStringToObject(component, "state_topic", state_topic.c_str());
     cJSON_AddStringToObject(component, "command_topic", command_topic.c_str());
     cJSON_AddStringToObject(component, "mode", "text");
@@ -193,9 +216,11 @@ void add_switch_component(
     cJSON *component,
     const std::string &name,
     const std::string &unique_id_value,
+    const std::string &default_entity_id_value,
     const std::string &state_topic,
     const std::string &command_topic) {
     add_component_common(component, name, unique_id_value);
+    cJSON_AddStringToObject(component, "default_entity_id", default_entity_id_value.c_str());
     cJSON_AddStringToObject(component, "state_topic", state_topic.c_str());
     cJSON_AddStringToObject(component, "command_topic", command_topic.c_str());
     cJSON_AddStringToObject(component, "payload_on", "ON");
@@ -418,7 +443,14 @@ void MqttBridge::publish_discovery() {
         add_device_block(root);
         add_origin_block(root);
         add_availability_block(root, availability_topic_);
-        add_sensor_component(root, name, unique_id(device_id_, object_id), state_topic, attributes_topic, unit);
+        add_sensor_component(
+            root,
+            name,
+            unique_id(device_id_, object_id),
+            default_entity_id("sensor", device_id_, object_id),
+            state_topic,
+            attributes_topic,
+            unit);
         publish_discovery_payload("sensor", object_id, root);
     };
 
@@ -429,7 +461,12 @@ void MqttBridge::publish_discovery() {
         add_device_block(root);
         add_origin_block(root);
         add_availability_block(root, availability_topic_);
-        add_button_component(root, name, unique_id(device_id_, object_id), command_topic);
+        add_button_component(
+            root,
+            name,
+            unique_id(device_id_, object_id),
+            default_entity_id("button", device_id_, object_id),
+            command_topic);
         publish_discovery_payload("button", object_id, root);
     };
 
@@ -445,7 +482,17 @@ void MqttBridge::publish_discovery() {
         add_device_block(root);
         add_origin_block(root);
         add_availability_block(root, availability_topic_);
-        add_number_component(root, name, unique_id(device_id_, object_id), state_topic, command_topic, min_value, max_value, step, unit);
+        add_number_component(
+            root,
+            name,
+            unique_id(device_id_, object_id),
+            default_entity_id("number", device_id_, object_id),
+            state_topic,
+            command_topic,
+            min_value,
+            max_value,
+            step,
+            unit);
         publish_discovery_payload("number", object_id, root);
     };
 
@@ -458,7 +505,14 @@ void MqttBridge::publish_discovery() {
         add_device_block(root);
         add_origin_block(root);
         add_availability_block(root, availability_topic_);
-        add_text_component(root, name, unique_id(device_id_, object_id), state_topic, command_topic, pattern);
+        add_text_component(
+            root,
+            name,
+            unique_id(device_id_, object_id),
+            default_entity_id("text", device_id_, object_id),
+            state_topic,
+            command_topic,
+            pattern);
         publish_discovery_payload("text", object_id, root);
     };
 
@@ -470,7 +524,13 @@ void MqttBridge::publish_discovery() {
         add_device_block(root);
         add_origin_block(root);
         add_availability_block(root, availability_topic_);
-        add_switch_component(root, name, unique_id(device_id_, object_id), state_topic, command_topic);
+        add_switch_component(
+            root,
+            name,
+            unique_id(device_id_, object_id),
+            default_entity_id("switch", device_id_, object_id),
+            state_topic,
+            command_topic);
         publish_discovery_payload("switch", object_id, root);
     };
 
@@ -481,84 +541,85 @@ void MqttBridge::publish_discovery() {
     for (std::size_t index = 0; index < kZoneCount; ++index) {
         const auto zone = zone_from_index(index);
         const auto zone_name = std::string(to_string(zone));
+        const auto zone_title = std::string(zone_label(zone));
 
-        publish_button(zone_name + "_start", zone_name + " Start", build_topic("cmd/" + zone_name + "/start"));
-        publish_button(zone_name + "_stop", zone_name + " Stop", build_topic("cmd/" + zone_name + "/stop"));
+        publish_button(zone_name + "_start", zone_title + " Start", build_topic("cmd/" + zone_name + "/start"));
+        publish_button(zone_name + "_stop", zone_title + " Stop", build_topic("cmd/" + zone_name + "/stop"));
         publish_number(zone_name + "_manual_duration",
-                       zone_name + " Manual Duration",
+                       zone_title + " Manual Duration",
                        build_topic("state/" + zone_name + "/manual_duration_seconds"),
                        build_topic("cmd/" + zone_name + "/manual_duration_seconds/set"),
                        1, kMaxWateringSeconds, 1, "s");
         publish_sensor(zone_name + "_state",
-                       zone_name + " State",
+                       zone_title + " State",
                        build_topic("state/" + zone_name + "/runtime_state"),
                        build_topic("attr/" + zone_name + "/runtime"));
         publish_sensor(zone_name + "_remaining",
-                       zone_name + " Remaining Seconds",
+                       zone_title + " Remaining Seconds",
                        build_topic("state/" + zone_name + "/remaining_seconds"),
                        build_topic("attr/" + zone_name + "/runtime"),
                        "s");
         publish_sensor(zone_name + "_active_schedule",
-                       zone_name + " Active Schedule Mode",
+                       zone_title + " Active Schedule Mode",
                        build_topic("state/" + zone_name + "/active_schedule_mode"),
                        build_topic("attr/" + zone_name + "/runtime"));
 
         publish_switch(zone_name + "_timer_enabled",
-                       zone_name + " Timer Enabled",
+                       zone_title + " Timer Enabled",
                        build_topic("state/" + zone_name + "/timer/enabled"),
                        build_topic("cmd/" + zone_name + "/timer/enabled/set"));
         publish_text(zone_name + "_timer_days",
-                     zone_name + " Timer Days",
+                     zone_title + " Timer Days",
                      build_topic("state/" + zone_name + "/timer/days"),
                      build_topic("cmd/" + zone_name + "/timer/days/set"));
         for (int slot = 0; slot < 4; ++slot) {
             const auto key = zone_name + "_timer_start" + std::to_string(slot + 1);
             publish_text(key,
-                         zone_name + " Timer Start " + std::to_string(slot + 1),
+                         zone_title + " Timer Start " + std::to_string(slot + 1),
                          build_topic("state/" + zone_name + "/timer/start" + std::to_string(slot + 1)),
                          build_topic("cmd/" + zone_name + "/timer/start" + std::to_string(slot + 1) + "/set"),
                          kPattern);
         }
         publish_number(zone_name + "_timer_run",
-                       zone_name + " Timer Run Seconds",
+                       zone_title + " Timer Run Seconds",
                        build_topic("state/" + zone_name + "/timer/run_seconds"),
                        build_topic("cmd/" + zone_name + "/timer/run_seconds/set"),
                        1, kMaxWateringSeconds, 1, "s");
-        publish_button(zone_name + "_timer_apply", zone_name + " Timer Apply", build_topic("cmd/" + zone_name + "/timer/apply"));
+        publish_button(zone_name + "_timer_apply", zone_title + " Timer Apply", build_topic("cmd/" + zone_name + "/timer/apply"));
         publish_sensor(zone_name + "_timer_apply_status",
-                       zone_name + " Timer Apply Status",
+                       zone_title + " Timer Apply Status",
                        build_topic("state/" + zone_name + "/timer/apply_status"),
                        build_topic("attr/" + zone_name + "/timer"));
 
         publish_switch(zone_name + "_cycling_enabled",
-                       zone_name + " Cycling Enabled",
+                       zone_title + " Cycling Enabled",
                        build_topic("state/" + zone_name + "/cycling/enabled"),
                        build_topic("cmd/" + zone_name + "/cycling/enabled/set"));
         publish_text(zone_name + "_cycling_days",
-                     zone_name + " Cycling Days",
+                     zone_title + " Cycling Days",
                      build_topic("state/" + zone_name + "/cycling/days"),
                      build_topic("cmd/" + zone_name + "/cycling/days/set"));
         for (const auto &field : {"start1", "end1", "start2", "end2"}) {
             const auto key = zone_name + "_cycling_" + std::string(field);
             publish_text(key,
-                         zone_name + " Cycling " + std::string(field),
+                         zone_title + " Cycling " + std::string(field),
                          build_topic("state/" + zone_name + "/cycling/" + field),
                          build_topic("cmd/" + zone_name + "/cycling/" + field + std::string("/set")),
                          kPattern);
         }
         publish_number(zone_name + "_cycling_run",
-                       zone_name + " Cycling Run Seconds",
+                       zone_title + " Cycling Run Seconds",
                        build_topic("state/" + zone_name + "/cycling/run_seconds"),
                        build_topic("cmd/" + zone_name + "/cycling/run_seconds/set"),
                        1, kMaxWateringSeconds, 1, "s");
         publish_number(zone_name + "_cycling_soak",
-                       zone_name + " Cycling Soak Seconds",
+                       zone_title + " Cycling Soak Seconds",
                        build_topic("state/" + zone_name + "/cycling/soak_seconds"),
                        build_topic("cmd/" + zone_name + "/cycling/soak_seconds/set"),
                        0, kMaxWateringSeconds, 1, "s");
-        publish_button(zone_name + "_cycling_apply", zone_name + " Cycling Apply", build_topic("cmd/" + zone_name + "/cycling/apply"));
+        publish_button(zone_name + "_cycling_apply", zone_title + " Cycling Apply", build_topic("cmd/" + zone_name + "/cycling/apply"));
         publish_sensor(zone_name + "_cycling_apply_status",
-                       zone_name + " Cycling Apply Status",
+                       zone_title + " Cycling Apply Status",
                        build_topic("state/" + zone_name + "/cycling/apply_status"),
                        build_topic("attr/" + zone_name + "/cycling"));
     }

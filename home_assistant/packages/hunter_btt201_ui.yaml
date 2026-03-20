@@ -1,0 +1,553 @@
+# Hunter BTT201 mobile-first control package
+#
+# This package assumes the bridge was flashed with:
+#   BRIDGE_DEVICE_ID "hunter_bridge"
+#
+# If you changed BRIDGE_DEVICE_ID, replace every `hunter_bridge_` entity id below.
+
+input_number:
+  hunter_btt201_zone1_minutes:
+    name: Hunter BTT201 Zone 1 Minutes
+    icon: mdi:water-minus
+    min: 0
+    max: 60
+    step: 1
+    mode: box
+    unit_of_measurement: min
+    initial: 10
+
+  hunter_btt201_zone2_minutes:
+    name: Hunter BTT201 Zone 2 Minutes
+    icon: mdi:water-minus-outline
+    min: 0
+    max: 60
+    step: 1
+    mode: box
+    unit_of_measurement: min
+    initial: 10
+
+  hunter_btt201_repeat_count:
+    name: Hunter BTT201 Repeat Count
+    icon: mdi:repeat
+    min: 1
+    max: 4
+    step: 1
+    mode: box
+    initial: 1
+
+  hunter_btt201_pause_seconds:
+    name: Hunter BTT201 Pause Between Zones
+    icon: mdi:pause-circle-outline
+    min: 0
+    max: 300
+    step: 10
+    mode: box
+    unit_of_measurement: s
+    initial: 0
+
+input_boolean:
+  hunter_btt201_schedule_enabled:
+    name: Hunter BTT201 Schedule Enabled
+    icon: mdi:calendar-check
+    initial: true
+
+  hunter_btt201_schedule_monday:
+    name: Monday
+    icon: mdi:calendar-week-begin
+    initial: false
+
+  hunter_btt201_schedule_tuesday:
+    name: Tuesday
+    icon: mdi:calendar-week
+    initial: false
+
+  hunter_btt201_schedule_wednesday:
+    name: Wednesday
+    icon: mdi:calendar-week
+    initial: false
+
+  hunter_btt201_schedule_thursday:
+    name: Thursday
+    icon: mdi:calendar-week
+    initial: false
+
+  hunter_btt201_schedule_friday:
+    name: Friday
+    icon: mdi:calendar-week
+    initial: false
+
+  hunter_btt201_schedule_saturday:
+    name: Saturday
+    icon: mdi:calendar-weekend
+    initial: false
+
+  hunter_btt201_schedule_sunday:
+    name: Sunday
+    icon: mdi:calendar-weekend-outline
+    initial: false
+
+input_datetime:
+  hunter_btt201_schedule_start_time:
+    name: Hunter BTT201 Schedule Start Time
+    icon: mdi:clock-outline
+    has_date: false
+    has_time: true
+    initial: "06:00:00"
+
+template:
+  - sensor:
+      - name: Hunter BTT201 Program Summary
+        unique_id: hunter_btt201_program_summary
+        icon: mdi:sprinkler-variant
+        state: >-
+          {% set z1 = states('input_number.hunter_btt201_zone1_minutes') | int(0) %}
+          {% set z2 = states('input_number.hunter_btt201_zone2_minutes') | int(0) %}
+          {% set repeats = states('input_number.hunter_btt201_repeat_count') | int(1) %}
+          {% set pause = states('input_number.hunter_btt201_pause_seconds') | int(0) %}
+          {% set ns = namespace(parts=[]) %}
+          {% if z1 > 0 %}
+            {% set ns.parts = ns.parts + ['Z1 ' ~ z1 ~ 'm'] %}
+          {% endif %}
+          {% if z2 > 0 %}
+            {% set ns.parts = ns.parts + ['Z2 ' ~ z2 ~ 'm'] %}
+          {% endif %}
+          {% if ns.parts | count == 0 %}
+            No zones enabled
+          {% else %}
+            {{ ns.parts | join(' -> ') }} x{{ repeats }}{% if pause > 0 and z1 > 0 and z2 > 0 %} + {{ pause }}s pause{% endif %}
+          {% endif %}
+
+      - name: Hunter BTT201 Schedule Days
+        unique_id: hunter_btt201_schedule_days
+        icon: mdi:calendar-week
+        state: >-
+          {% set ns = namespace(days=[]) %}
+          {% if is_state('input_boolean.hunter_btt201_schedule_monday', 'on') %}
+            {% set ns.days = ns.days + ['Mon'] %}
+          {% endif %}
+          {% if is_state('input_boolean.hunter_btt201_schedule_tuesday', 'on') %}
+            {% set ns.days = ns.days + ['Tue'] %}
+          {% endif %}
+          {% if is_state('input_boolean.hunter_btt201_schedule_wednesday', 'on') %}
+            {% set ns.days = ns.days + ['Wed'] %}
+          {% endif %}
+          {% if is_state('input_boolean.hunter_btt201_schedule_thursday', 'on') %}
+            {% set ns.days = ns.days + ['Thu'] %}
+          {% endif %}
+          {% if is_state('input_boolean.hunter_btt201_schedule_friday', 'on') %}
+            {% set ns.days = ns.days + ['Fri'] %}
+          {% endif %}
+          {% if is_state('input_boolean.hunter_btt201_schedule_saturday', 'on') %}
+            {% set ns.days = ns.days + ['Sat'] %}
+          {% endif %}
+          {% if is_state('input_boolean.hunter_btt201_schedule_sunday', 'on') %}
+            {% set ns.days = ns.days + ['Sun'] %}
+          {% endif %}
+          {% if ns.days | count == 0 %}
+            No days enabled
+          {% else %}
+            {{ ns.days | join(', ') }}
+          {% endif %}
+
+      - name: Hunter BTT201 Schedule Summary
+        unique_id: hunter_btt201_schedule_summary
+        icon: mdi:calendar-clock
+        state: >-
+          {% set start_time = states('input_datetime.hunter_btt201_schedule_start_time') %}
+          {% set days = states('sensor.hunter_btt201_schedule_days') %}
+          {% if is_state('input_boolean.hunter_btt201_schedule_enabled', 'off') %}
+            Disabled
+          {% elif days in ['unknown', 'unavailable', 'No days enabled'] %}
+            Choose one or more days
+          {% elif start_time in ['unknown', 'unavailable', 'none', ''] %}
+            Set a start time
+          {% else %}
+            {{ days }} at {{ start_time[0:5] }}
+          {% endif %}
+
+      - name: Hunter BTT201 Next Scheduled Run
+        unique_id: hunter_btt201_next_scheduled_run
+        icon: mdi:clock-start
+        state: >-
+          {% set mon = is_state('input_boolean.hunter_btt201_schedule_monday', 'on') %}
+          {% set tue = is_state('input_boolean.hunter_btt201_schedule_tuesday', 'on') %}
+          {% set wed = is_state('input_boolean.hunter_btt201_schedule_wednesday', 'on') %}
+          {% set thu = is_state('input_boolean.hunter_btt201_schedule_thursday', 'on') %}
+          {% set fri = is_state('input_boolean.hunter_btt201_schedule_friday', 'on') %}
+          {% set sat = is_state('input_boolean.hunter_btt201_schedule_saturday', 'on') %}
+          {% set sun = is_state('input_boolean.hunter_btt201_schedule_sunday', 'on') %}
+          {% set enabled_days = [mon, tue, wed, thu, fri, sat, sun] %}
+          {% set enabled_count =
+            (1 if mon else 0) +
+            (1 if tue else 0) +
+            (1 if wed else 0) +
+            (1 if thu else 0) +
+            (1 if fri else 0) +
+            (1 if sat else 0) +
+            (1 if sun else 0) %}
+          {% set start_time = states('input_datetime.hunter_btt201_schedule_start_time') %}
+          {% if is_state('input_boolean.hunter_btt201_schedule_enabled', 'off') %}
+            Disabled
+          {% elif enabled_count == 0 %}
+            Not scheduled
+          {% elif start_time in ['unknown', 'unavailable', 'none', ''] %}
+            Set a start time
+          {% else %}
+            {% set ns = namespace(next='') %}
+            {% for offset in range(0, 8) %}
+              {% set candidate_day = now() + timedelta(days=offset) %}
+              {% set candidate_time = today_at(start_time) + timedelta(days=offset) %}
+              {% if enabled_days[candidate_day.weekday()] and candidate_time > now() and ns.next == '' %}
+                {% set ns.next = as_local(candidate_time).strftime('%a %d %b %H:%M') %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.next if ns.next else 'Not scheduled' }}
+          {% endif %}
+
+      - name: Hunter BTT201 Schedule Status
+        unique_id: hunter_btt201_schedule_status
+        icon: mdi:calendar-sync
+        state: >-
+          {% if is_state('input_boolean.hunter_btt201_schedule_enabled', 'off') %}
+            Disabled
+          {% elif states('sensor.hunter_btt201_schedule_days') == 'No days enabled' %}
+            No days enabled
+          {% else %}
+            Ready
+          {% endif %}
+
+      - name: Hunter BTT201 Zone 1 State
+        unique_id: hunter_btt201_zone1_state_proxy
+        icon: mdi:sprinkler
+        state: "{{ states('sensor.hunter_bridge_zone1_state') }}"
+
+      - name: Hunter BTT201 Zone 2 State
+        unique_id: hunter_btt201_zone2_state_proxy
+        icon: mdi:sprinkler-variant
+        state: "{{ states('sensor.hunter_bridge_zone2_state') }}"
+
+      - name: Hunter BTT201 Zone 1 Remaining
+        unique_id: hunter_btt201_zone1_remaining_proxy
+        icon: mdi:timer-outline
+        unit_of_measurement: s
+        state: "{{ states('sensor.hunter_bridge_zone1_remaining') }}"
+
+      - name: Hunter BTT201 Zone 2 Remaining
+        unique_id: hunter_btt201_zone2_remaining_proxy
+        icon: mdi:timer-outline
+        unit_of_measurement: s
+        state: "{{ states('sensor.hunter_bridge_zone2_remaining') }}"
+
+      - name: Hunter BTT201 Bridge Health
+        unique_id: hunter_btt201_bridge_health_proxy
+        icon: mdi:heart-pulse
+        state: "{{ states('sensor.hunter_bridge_bridge_health') }}"
+
+      - name: Hunter BTT201 Hunter Battery
+        unique_id: hunter_btt201_hunter_battery_proxy
+        icon: mdi:battery
+        unit_of_measurement: "%"
+        state: "{{ states('sensor.hunter_bridge_battery_percent') }}"
+
+      - name: Hunter BTT201 Last Error
+        unique_id: hunter_btt201_last_error
+        icon: mdi:alert-circle-outline
+        state: >-
+          {% set bridge_error = state_attr('sensor.hunter_bridge_bridge_health', 'bridge_error') %}
+          {% set ui_error = state_attr('sensor.hunter_bridge_bridge_health', 'last_ui_error') %}
+          {% if ui_error not in [none, '', 'unknown', 'unavailable'] %}
+            {{ ui_error }}
+          {% elif bridge_error not in [none, '', 'unknown', 'unavailable'] %}
+            {{ bridge_error }}
+          {% else %}
+            OK
+          {% endif %}
+
+  - binary_sensor:
+      - name: Hunter BTT201 Program Running
+        unique_id: hunter_btt201_program_running
+        icon: mdi:play-network
+        state: "{{ is_state('script.hunter_btt201_run_program', 'on') }}"
+
+script:
+  hunter_btt201_run_program:
+    alias: Hunter BTT201 Run Program
+    icon: mdi:play-circle
+    mode: single
+    sequence:
+      - variables:
+          repeat_count: "{{ states('input_number.hunter_btt201_repeat_count') | int(1) }}"
+          pause_seconds: "{{ states('input_number.hunter_btt201_pause_seconds') | int(0) }}"
+          zone1_seconds: "{{ [states('input_number.hunter_btt201_zone1_minutes') | int(0) * 60, 3600] | min }}"
+          zone2_seconds: "{{ [states('input_number.hunter_btt201_zone2_minutes') | int(0) * 60, 3600] | min }}"
+      - choose:
+          - conditions: "{{ zone1_seconds <= 0 and zone2_seconds <= 0 }}"
+            sequence:
+              - stop: "Program has no active zones"
+
+      - repeat:
+          count: "{{ repeat_count }}"
+          sequence:
+            - alias: Run Zone 1 if configured
+              choose:
+                - conditions: "{{ zone1_seconds > 0 }}"
+                  sequence:
+                    - action: number.set_value
+                      target:
+                        entity_id: number.hunter_bridge_zone1_manual_duration
+                      data:
+                        value: "{{ zone1_seconds }}"
+                    - action: button.press
+                      target:
+                        entity_id: button.hunter_bridge_zone1_start
+                    - wait_for_trigger:
+                        - trigger: state
+                          entity_id: sensor.hunter_bridge_zone1_state
+                          to: "running"
+                        - trigger: state
+                          entity_id: sensor.hunter_bridge_zone1_state
+                          to: "error"
+                        - trigger: state
+                          entity_id: sensor.hunter_bridge_zone1_state
+                          to: "unknown"
+                      timeout: "00:00:20"
+                      continue_on_timeout: true
+                    - choose:
+                        - conditions: "{{ (not wait.completed) or wait.trigger is none or wait.trigger.to_state.state != 'running' }}"
+                          sequence:
+                            - action: script.hunter_btt201_stop_all
+                            - stop: "Zone 1 did not confirm start"
+                              error: true
+                    - wait_for_trigger:
+                        - trigger: state
+                          entity_id: sensor.hunter_bridge_zone1_state
+                          to: "idle"
+                        - trigger: state
+                          entity_id: sensor.hunter_bridge_zone1_state
+                          to: "error"
+                        - trigger: state
+                          entity_id: sensor.hunter_bridge_zone1_state
+                          to: "unknown"
+                      timeout: "01:05:00"
+                      continue_on_timeout: true
+                    - choose:
+                        - conditions: "{{ (not wait.completed) or wait.trigger is none or wait.trigger.to_state.state != 'idle' }}"
+                          sequence:
+                            - action: script.hunter_btt201_stop_all
+                            - stop: "Zone 1 did not return to idle cleanly"
+                              error: true
+                    - choose:
+                        - conditions: "{{ pause_seconds > 0 and zone2_seconds > 0 }}"
+                          sequence:
+                            - delay:
+                                seconds: "{{ pause_seconds }}"
+
+            - alias: Run Zone 2 if configured
+              choose:
+                - conditions: "{{ zone2_seconds > 0 }}"
+                  sequence:
+                    - action: number.set_value
+                      target:
+                        entity_id: number.hunter_bridge_zone2_manual_duration
+                      data:
+                        value: "{{ zone2_seconds }}"
+                    - action: button.press
+                      target:
+                        entity_id: button.hunter_bridge_zone2_start
+                    - wait_for_trigger:
+                        - trigger: state
+                          entity_id: sensor.hunter_bridge_zone2_state
+                          to: "running"
+                        - trigger: state
+                          entity_id: sensor.hunter_bridge_zone2_state
+                          to: "error"
+                        - trigger: state
+                          entity_id: sensor.hunter_bridge_zone2_state
+                          to: "unknown"
+                      timeout: "00:00:20"
+                      continue_on_timeout: true
+                    - choose:
+                        - conditions: "{{ (not wait.completed) or wait.trigger is none or wait.trigger.to_state.state != 'running' }}"
+                          sequence:
+                            - action: script.hunter_btt201_stop_all
+                            - stop: "Zone 2 did not confirm start"
+                              error: true
+                    - wait_for_trigger:
+                        - trigger: state
+                          entity_id: sensor.hunter_bridge_zone2_state
+                          to: "idle"
+                        - trigger: state
+                          entity_id: sensor.hunter_bridge_zone2_state
+                          to: "error"
+                        - trigger: state
+                          entity_id: sensor.hunter_bridge_zone2_state
+                          to: "unknown"
+                      timeout: "01:05:00"
+                      continue_on_timeout: true
+                    - choose:
+                        - conditions: "{{ (not wait.completed) or wait.trigger is none or wait.trigger.to_state.state != 'idle' }}"
+                          sequence:
+                            - action: script.hunter_btt201_stop_all
+                            - stop: "Zone 2 did not return to idle cleanly"
+                              error: true
+
+  hunter_btt201_stop_all:
+    alias: Hunter BTT201 Stop All
+    icon: mdi:stop-circle
+    mode: restart
+    sequence:
+      - action: button.press
+        target:
+          entity_id: button.hunter_bridge_zone1_stop
+        continue_on_error: true
+      - action: button.press
+        target:
+          entity_id: button.hunter_bridge_zone2_stop
+        continue_on_error: true
+      - delay: "00:00:01"
+      - action: button.press
+        target:
+          entity_id: button.hunter_bridge_zone1_stop
+        continue_on_error: true
+      - action: button.press
+        target:
+          entity_id: button.hunter_bridge_zone2_stop
+        continue_on_error: true
+      - action: script.turn_off
+        target:
+          entity_id: script.hunter_btt201_run_program
+        continue_on_error: true
+
+  hunter_btt201_run_zone1_now:
+    alias: Hunter BTT201 Start Zone 1
+    icon: mdi:play-circle-outline
+    mode: restart
+    sequence:
+      - variables:
+          zone1_seconds: "{{ [states('input_number.hunter_btt201_zone1_minutes') | int(0) * 60, 3600] | min }}"
+      - choose:
+          - conditions: "{{ zone1_seconds <= 0 }}"
+            sequence:
+              - stop: "Zone 1 duration is 0 minutes"
+      - action: number.set_value
+        target:
+          entity_id: number.hunter_bridge_zone1_manual_duration
+        data:
+          value: "{{ zone1_seconds }}"
+      - action: button.press
+        target:
+          entity_id: button.hunter_bridge_zone1_start
+
+  hunter_btt201_run_zone2_now:
+    alias: Hunter BTT201 Start Zone 2
+    icon: mdi:play-circle-outline
+    mode: restart
+    sequence:
+      - variables:
+          zone2_seconds: "{{ [states('input_number.hunter_btt201_zone2_minutes') | int(0) * 60, 3600] | min }}"
+      - choose:
+          - conditions: "{{ zone2_seconds <= 0 }}"
+            sequence:
+              - stop: "Zone 2 duration is 0 minutes"
+      - action: number.set_value
+        target:
+          entity_id: number.hunter_bridge_zone2_manual_duration
+        data:
+          value: "{{ zone2_seconds }}"
+      - action: button.press
+        target:
+          entity_id: button.hunter_bridge_zone2_start
+
+  hunter_btt201_set_preset_5_5:
+    alias: Hunter BTT201 Preset 5 / 5
+    icon: mdi:timer-outline
+    mode: restart
+    sequence:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.hunter_btt201_zone1_minutes
+        data:
+          value: 5
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.hunter_btt201_zone2_minutes
+        data:
+          value: 5
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.hunter_btt201_repeat_count
+        data:
+          value: 1
+
+  hunter_btt201_set_preset_15_15:
+    alias: Hunter BTT201 Preset 15 / 15
+    icon: mdi:timer-outline
+    mode: restart
+    sequence:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.hunter_btt201_zone1_minutes
+        data:
+          value: 15
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.hunter_btt201_zone2_minutes
+        data:
+          value: 15
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.hunter_btt201_repeat_count
+        data:
+          value: 1
+
+  hunter_btt201_set_preset_30_30:
+    alias: Hunter BTT201 Preset 30 / 30
+    icon: mdi:timer-outline
+    mode: restart
+    sequence:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.hunter_btt201_zone1_minutes
+        data:
+          value: 30
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.hunter_btt201_zone2_minutes
+        data:
+          value: 30
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.hunter_btt201_repeat_count
+        data:
+          value: 1
+
+automation:
+  - id: hunter_btt201_run_program_on_schedule
+    alias: Hunter BTT201 Run Program On Schedule
+    mode: single
+    triggers:
+      - trigger: time
+        at: input_datetime.hunter_btt201_schedule_start_time
+    conditions:
+      - condition: state
+        entity_id: input_boolean.hunter_btt201_schedule_enabled
+        state: "on"
+      - condition: state
+        entity_id: script.hunter_btt201_run_program
+        state: "off"
+      - condition: template
+        value_template: >-
+          {% set enabled_today = [
+            is_state('input_boolean.hunter_btt201_schedule_monday', 'on'),
+            is_state('input_boolean.hunter_btt201_schedule_tuesday', 'on'),
+            is_state('input_boolean.hunter_btt201_schedule_wednesday', 'on'),
+            is_state('input_boolean.hunter_btt201_schedule_thursday', 'on'),
+            is_state('input_boolean.hunter_btt201_schedule_friday', 'on'),
+            is_state('input_boolean.hunter_btt201_schedule_saturday', 'on'),
+            is_state('input_boolean.hunter_btt201_schedule_sunday', 'on')
+          ] %}
+          {{ enabled_today[now().weekday()] }}
+    actions:
+      - action: script.turn_on
+        target:
+          entity_id: script.hunter_btt201_run_program
