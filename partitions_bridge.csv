@@ -1,0 +1,5 @@
+# Name,   Type, SubType, Offset,   Size, Flags
+# Single factory app with generous headroom for the ESP-IDF + NimBLE + MQTT image.
+nvs,      data, nvs,     ,        0x6000,
+phy_init, data, phy,     ,        0x1000,
+factory,  app,  factory, ,        0x300000,

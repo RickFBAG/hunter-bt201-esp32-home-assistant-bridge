@@ -3,4 +3,7 @@
 bridge_secrets.h
 include/bridge_secrets.h
 compile_commands.json
-
+sdkconfig.*
+managed_components/
+components/**/.component_hash
+components/**/test_apps/

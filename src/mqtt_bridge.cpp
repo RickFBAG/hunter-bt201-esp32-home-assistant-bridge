@@ -1,7 +1,10 @@
 #include "mqtt_bridge.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cstdlib>
+#include <optional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -9,6 +12,7 @@ extern "C" {
 #include "cJSON.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 }
 
 #include "bridge_config.h"
@@ -20,17 +24,69 @@ namespace {
 
 constexpr char kTag[] = "MqttBridge";
 constexpr char kPattern[] = "^(OFF|[0-2][0-9]:[0-5][0-9]:[0-5][0-9])$";
+constexpr int kMqttTaskStackSize = 12288;
+constexpr int kMqttBridgeTaskStackSize = 16384;
+constexpr int kMqttBufferSize = 4096;
+constexpr std::size_t kCopyTruncateLimit = 191;
 
 bool starts_with(const std::string &value, const std::string &prefix) {
     return value.rfind(prefix, 0) == 0;
 }
 
-std::string payload_from_event(esp_mqtt_event_handle_t event) {
-    return std::string(event->data, event->data_len);
+std::optional<std::string> validate_mqtt_uri(const std::string_view uri) {
+    constexpr std::string_view kMqttScheme = "mqtt://";
+    constexpr std::string_view kMqttsScheme = "mqtts://";
+
+    const auto scheme_len =
+        uri.rfind(kMqttScheme, 0) == 0 ? kMqttScheme.size() :
+        uri.rfind(kMqttsScheme, 0) == 0 ? kMqttsScheme.size() :
+        0;
+    if (scheme_len == 0) {
+        return std::string("BRIDGE_MQTT_URI must start with mqtt:// or mqtts://");
+    }
+
+    const auto authority_end = uri.find_first_of("/?", scheme_len);
+    const auto authority = uri.substr(scheme_len, authority_end == std::string_view::npos ? uri.size() - scheme_len : authority_end - scheme_len);
+    if (authority.empty()) {
+        return std::string("BRIDGE_MQTT_URI is missing a broker host");
+    }
+
+    if (authority.front() == '[') {
+        const auto closing = authority.find(']');
+        if (closing == std::string_view::npos) {
+            return std::string("IPv6 MQTT broker URI is missing a closing ]");
+        }
+
+        const auto host = authority.substr(1, closing - 1);
+        if (host.rfind("fe80:", 0) == 0 || host.rfind("FE80:", 0) == 0) {
+            return std::string("IPv6 link-local MQTT broker addresses are not supported; use an IPv4 address instead");
+        }
+        return std::nullopt;
+    }
+
+    if (authority.find("::") != std::string_view::npos) {
+        return std::string("IPv6 MQTT broker URIs must use brackets, for example mqtt://[2001:db8::10]");
+    }
+
+    if (authority.rfind("fe80:", 0) == 0 || authority.rfind("FE80:", 0) == 0) {
+        return std::string("IPv6 link-local MQTT broker addresses are not supported; use an IPv4 address instead");
+    }
+
+    return std::nullopt;
 }
 
-std::string topic_from_event(esp_mqtt_event_handle_t event) {
-    return std::string(event->topic, event->topic_len);
+void copy_bounded(const char *source, const int source_len, char *destination, const std::size_t destination_len) {
+    if (destination_len == 0) {
+        return;
+    }
+
+    const auto safe_len = std::min<std::size_t>(
+        source != nullptr && source_len > 0 ? static_cast<std::size_t>(source_len) : 0,
+        destination_len - 1);
+    if (safe_len > 0) {
+        std::memcpy(destination, source, safe_len);
+    }
+    destination[safe_len] = '\0';
 }
 
 std::string unique_id(const std::string &device_id, const std::string &component_id) {
@@ -69,15 +125,12 @@ void add_component_common(cJSON *component, const std::string &name, const std::
 }
 
 void add_sensor_component(
-    cJSON *components,
-    const std::string &key,
+    cJSON *component,
     const std::string &name,
     const std::string &unique_id_value,
     const std::string &state_topic,
     const std::string &attributes_topic,
     const char *unit = nullptr) {
-    auto *component = cJSON_AddObjectToObject(components, key.c_str());
-    cJSON_AddStringToObject(component, "platform", "sensor");
     add_component_common(component, name, unique_id_value);
     cJSON_AddStringToObject(component, "state_topic", state_topic.c_str());
     if (!attributes_topic.empty()) {
@@ -89,21 +142,17 @@ void add_sensor_component(
 }
 
 void add_button_component(
-    cJSON *components,
-    const std::string &key,
+    cJSON *component,
     const std::string &name,
     const std::string &unique_id_value,
     const std::string &command_topic) {
-    auto *component = cJSON_AddObjectToObject(components, key.c_str());
-    cJSON_AddStringToObject(component, "platform", "button");
     add_component_common(component, name, unique_id_value);
     cJSON_AddStringToObject(component, "command_topic", command_topic.c_str());
     cJSON_AddStringToObject(component, "payload_press", "PRESS");
 }
 
 void add_number_component(
-    cJSON *components,
-    const std::string &key,
+    cJSON *component,
     const std::string &name,
     const std::string &unique_id_value,
     const std::string &state_topic,
@@ -112,8 +161,6 @@ void add_number_component(
     int max_value,
     int step,
     const char *unit = nullptr) {
-    auto *component = cJSON_AddObjectToObject(components, key.c_str());
-    cJSON_AddStringToObject(component, "platform", "number");
     add_component_common(component, name, unique_id_value);
     cJSON_AddStringToObject(component, "state_topic", state_topic.c_str());
     cJSON_AddStringToObject(component, "command_topic", command_topic.c_str());
@@ -127,15 +174,12 @@ void add_number_component(
 }
 
 void add_text_component(
-    cJSON *components,
-    const std::string &key,
+    cJSON *component,
     const std::string &name,
     const std::string &unique_id_value,
     const std::string &state_topic,
     const std::string &command_topic,
     const char *pattern = nullptr) {
-    auto *component = cJSON_AddObjectToObject(components, key.c_str());
-    cJSON_AddStringToObject(component, "platform", "text");
     add_component_common(component, name, unique_id_value);
     cJSON_AddStringToObject(component, "state_topic", state_topic.c_str());
     cJSON_AddStringToObject(component, "command_topic", command_topic.c_str());
@@ -146,14 +190,11 @@ void add_text_component(
 }
 
 void add_switch_component(
-    cJSON *components,
-    const std::string &key,
+    cJSON *component,
     const std::string &name,
     const std::string &unique_id_value,
     const std::string &state_topic,
     const std::string &command_topic) {
-    auto *component = cJSON_AddObjectToObject(components, key.c_str());
-    cJSON_AddStringToObject(component, "platform", "switch");
     add_component_common(component, name, unique_id_value);
     cJSON_AddStringToObject(component, "state_topic", state_topic.c_str());
     cJSON_AddStringToObject(component, "command_topic", command_topic.c_str());
@@ -172,7 +213,39 @@ MqttBridge::MqttBridge(CommandCoordinator &coordinator)
       device_id_(config::kDeviceId),
       availability_topic_(base_topic_ + "/availability") {}
 
+bool MqttBridge::is_connected() const {
+    return connected_.load();
+}
+
+std::int64_t MqttBridge::last_connection_change_ms() const {
+    return last_connection_change_ms_.load();
+}
+
 esp_err_t MqttBridge::init() {
+    const auto mqtt_uri = std::string_view(config::kMqttUri);
+    if (mqtt_uri.find(".local") != std::string_view::npos) {
+        ESP_LOGW(kTag, "BRIDGE_MQTT_URI uses a .local hostname; prefer an IP address or normal DNS name");
+    }
+    if (const auto validation_error = validate_mqtt_uri(mqtt_uri); validation_error.has_value()) {
+        ESP_LOGE(kTag, "%s", validation_error->c_str());
+        ESP_LOGE(kTag, "configured broker URI: %s", config::kMqttUri);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (work_queue_ == nullptr) {
+        work_queue_ = xQueueCreate(16, sizeof(WorkItem));
+        if (work_queue_ == nullptr) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    if (worker_task_handle_ == nullptr) {
+        const auto created = xTaskCreate(&MqttBridge::worker_task, "mqtt_bridge", kMqttBridgeTaskStackSize, this, 5, &worker_task_handle_);
+        if (created != pdPASS) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
     esp_mqtt_client_config_t config_value = {};
     config_value.broker.address.uri = config::kMqttUri;
     config_value.credentials.username = config::kMqttUsername;
@@ -183,66 +256,149 @@ esp_err_t MqttBridge::init() {
     config_value.session.last_will.qos = 1;
     config_value.session.last_will.retain = 1;
     config_value.network.reconnect_timeout_ms = 5000;
+    config_value.task.stack_size = kMqttTaskStackSize;
+    config_value.buffer.size = kMqttBufferSize;
+    config_value.buffer.out_size = kMqttBufferSize;
 
     client_ = esp_mqtt_client_init(&config_value);
     if (client_ == nullptr) {
+        ESP_LOGE(kTag, "esp_mqtt_client_init failed for URI: %s", config::kMqttUri);
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_ERROR_CHECK(esp_mqtt_client_register_event(client_, ESP_EVENT_ANY_ID, &MqttBridge::mqtt_event_handler, this));
-    return esp_mqtt_client_start(client_);
+    ESP_ERROR_CHECK(esp_mqtt_client_register_event(client_, MQTT_EVENT_ANY, &MqttBridge::mqtt_event_handler, this));
+    ESP_LOGI(kTag, "MQTT client initialized; waiting for WiFi before first connect");
+    return ESP_OK;
 }
 
 void MqttBridge::on_state_changed() {
-    if (connected_) {
-        publish_state();
-    }
+    WorkItem item{};
+    item.type = WorkType::StateChanged;
+    enqueue_work(item);
 }
 
 void MqttBridge::handle_wifi_offline() {
-    publish_availability(false);
+    WorkItem item{};
+    item.type = WorkType::WifiOffline;
+    enqueue_work(item);
 }
 
 void MqttBridge::handle_wifi_online() {
-    if (connected_) {
-        publish_availability(true);
-        publish_discovery();
-        publish_state();
-    }
+    WorkItem item{};
+    item.type = WorkType::WifiOnline;
+    enqueue_work(item);
 }
 
 void MqttBridge::mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+    (void)base;
     auto *self = static_cast<MqttBridge *>(handler_args);
     auto *event = static_cast<esp_mqtt_event_handle_t>(event_data);
+    WorkItem item{};
     switch (static_cast<esp_mqtt_event_id_t>(event_id)) {
         case MQTT_EVENT_CONNECTED:
-            self->on_mqtt_connected();
+            item.type = WorkType::MqttConnected;
+            self->enqueue_work(item);
             break;
         case MQTT_EVENT_DISCONNECTED:
-            self->on_mqtt_disconnected();
+            item.type = WorkType::MqttDisconnected;
+            self->enqueue_work(item);
             break;
         case MQTT_EVENT_DATA:
-            self->on_mqtt_data(event);
+            item.type = WorkType::MqttData;
+            if (event->topic_len > static_cast<int>(kCopyTruncateLimit) || event->data_len > static_cast<int>(kCopyTruncateLimit)) {
+                ESP_LOGW(kTag, "dropping oversized mqtt message topic_len=%d data_len=%d", event->topic_len, event->data_len);
+                break;
+            }
+            copy_bounded(event->topic, event->topic_len, item.topic, sizeof(item.topic));
+            copy_bounded(event->data, event->data_len, item.payload, sizeof(item.payload));
+            self->enqueue_work(item);
             break;
         default:
             break;
     }
 }
 
+void MqttBridge::worker_task(void *param) {
+    static_cast<MqttBridge *>(param)->worker_loop();
+}
+
+bool MqttBridge::enqueue_work(const WorkItem &item) {
+    if (work_queue_ == nullptr) {
+        return false;
+    }
+
+    const auto sent = xQueueSend(static_cast<QueueHandle_t>(work_queue_), &item, 0);
+    if (sent != pdTRUE && item.type != WorkType::StateChanged) {
+        ESP_LOGW(kTag, "dropping bridge work item type=%d", static_cast<int>(item.type));
+    }
+    return sent == pdTRUE;
+}
+
+void MqttBridge::worker_loop() {
+    WorkItem item{};
+    while (true) {
+        if (xQueueReceive(static_cast<QueueHandle_t>(work_queue_), &item, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+
+        switch (item.type) {
+            case WorkType::StateChanged:
+                if (connected_.load()) {
+                    publish_state();
+                }
+                break;
+            case WorkType::WifiOffline:
+                if (connected_.load()) {
+                    publish_availability(false);
+                }
+                break;
+            case WorkType::WifiOnline:
+                if (!started_.load()) {
+                    const auto start_result = esp_mqtt_client_start(client_);
+                    if (start_result == ESP_OK) {
+                        started_ = true;
+                        ESP_LOGI(kTag, "MQTT client start requested");
+                    } else {
+                        ESP_LOGE(kTag, "esp_mqtt_client_start failed: %s", esp_err_to_name(start_result));
+                    }
+                } else if (connected_.load()) {
+                    publish_availability(true);
+                    publish_discovery();
+                    publish_state();
+                }
+                break;
+            case WorkType::MqttConnected:
+                on_mqtt_connected();
+                break;
+            case WorkType::MqttDisconnected:
+                on_mqtt_disconnected();
+                break;
+            case WorkType::MqttData:
+                on_mqtt_data(item);
+                break;
+        }
+    }
+}
+
 void MqttBridge::on_mqtt_connected() {
     connected_ = true;
+    last_connection_change_ms_ = esp_timer_get_time() / 1000;
+    ESP_LOGI(kTag, "MQTT connected");
     subscribe_topics();
     publish_availability(true);
+    ESP_LOGI(kTag, "Publishing MQTT discovery");
     publish_discovery();
+    ESP_LOGI(kTag, "Publishing MQTT state");
     publish_state();
 }
 
 void MqttBridge::on_mqtt_disconnected() {
     connected_ = false;
+    last_connection_change_ms_ = esp_timer_get_time() / 1000;
 }
 
-void MqttBridge::on_mqtt_data(esp_mqtt_event_handle_t event) {
-    process_command(topic_from_event(event), payload_from_event(event));
+void MqttBridge::on_mqtt_data(const WorkItem &item) {
+    process_command(item.topic, item.payload);
 }
 
 void MqttBridge::subscribe_topics() {
@@ -251,107 +407,175 @@ void MqttBridge::subscribe_topics() {
 }
 
 void MqttBridge::publish_discovery() {
-    auto *root = cJSON_CreateObject();
-    add_device_block(root);
-    add_origin_block(root);
-    add_availability_block(root, availability_topic_);
+    publish_topic(discovery_prefix_ + "/device/" + device_id_ + "/config", "", true);
 
-    auto *components = cJSON_AddObjectToObject(root, "components");
+    auto publish_sensor = [this](const std::string &object_id,
+                                 const std::string &name,
+                                 const std::string &state_topic,
+                                 const std::string &attributes_topic,
+                                 const char *unit = nullptr) {
+        auto *root = cJSON_CreateObject();
+        add_device_block(root);
+        add_origin_block(root);
+        add_availability_block(root, availability_topic_);
+        add_sensor_component(root, name, unique_id(device_id_, object_id), state_topic, attributes_topic, unit);
+        publish_discovery_payload("sensor", object_id, root);
+    };
 
-    add_sensor_component(components, "bridge_health", "Bridge Health", unique_id(device_id_, "bridge_health"),
-                         build_topic("state/bridge/health"), build_topic("attr/bridge"));
-    add_sensor_component(components, "battery_percent", "Battery Percent", unique_id(device_id_, "battery_percent"),
-                         build_topic("state/battery/percent"), build_topic("attr/bridge"), "%");
-    add_button_component(components, "refresh_battery", "Refresh Battery", unique_id(device_id_, "refresh_battery"),
-                         build_topic("cmd/battery/refresh"));
+    auto publish_button = [this](const std::string &object_id,
+                                 const std::string &name,
+                                 const std::string &command_topic) {
+        auto *root = cJSON_CreateObject();
+        add_device_block(root);
+        add_origin_block(root);
+        add_availability_block(root, availability_topic_);
+        add_button_component(root, name, unique_id(device_id_, object_id), command_topic);
+        publish_discovery_payload("button", object_id, root);
+    };
+
+    auto publish_number = [this](const std::string &object_id,
+                                 const std::string &name,
+                                 const std::string &state_topic,
+                                 const std::string &command_topic,
+                                 int min_value,
+                                 int max_value,
+                                 int step,
+                                 const char *unit = nullptr) {
+        auto *root = cJSON_CreateObject();
+        add_device_block(root);
+        add_origin_block(root);
+        add_availability_block(root, availability_topic_);
+        add_number_component(root, name, unique_id(device_id_, object_id), state_topic, command_topic, min_value, max_value, step, unit);
+        publish_discovery_payload("number", object_id, root);
+    };
+
+    auto publish_text = [this](const std::string &object_id,
+                               const std::string &name,
+                               const std::string &state_topic,
+                               const std::string &command_topic,
+                               const char *pattern = nullptr) {
+        auto *root = cJSON_CreateObject();
+        add_device_block(root);
+        add_origin_block(root);
+        add_availability_block(root, availability_topic_);
+        add_text_component(root, name, unique_id(device_id_, object_id), state_topic, command_topic, pattern);
+        publish_discovery_payload("text", object_id, root);
+    };
+
+    auto publish_switch = [this](const std::string &object_id,
+                                 const std::string &name,
+                                 const std::string &state_topic,
+                                 const std::string &command_topic) {
+        auto *root = cJSON_CreateObject();
+        add_device_block(root);
+        add_origin_block(root);
+        add_availability_block(root, availability_topic_);
+        add_switch_component(root, name, unique_id(device_id_, object_id), state_topic, command_topic);
+        publish_discovery_payload("switch", object_id, root);
+    };
+
+    publish_sensor("bridge_health", "Bridge Health", build_topic("state/bridge/health"), build_topic("attr/bridge"));
+    publish_sensor("battery_percent", "Battery Percent", build_topic("state/battery/percent"), build_topic("attr/bridge"), "%");
+    publish_button("refresh_battery", "Refresh Battery", build_topic("cmd/battery/refresh"));
 
     for (std::size_t index = 0; index < kZoneCount; ++index) {
         const auto zone = zone_from_index(index);
         const auto zone_name = std::string(to_string(zone));
 
-        add_button_component(components, zone_name + "_start", zone_name + " Start", unique_id(device_id_, zone_name + "_start"),
-                             build_topic("cmd/" + zone_name + "/start"));
-        add_button_component(components, zone_name + "_stop", zone_name + " Stop", unique_id(device_id_, zone_name + "_stop"),
-                             build_topic("cmd/" + zone_name + "/stop"));
-        add_number_component(components, zone_name + "_manual_duration", zone_name + " Manual Duration",
-                             unique_id(device_id_, zone_name + "_manual_duration"),
-                             build_topic("state/" + zone_name + "/manual_duration_seconds"),
-                             build_topic("cmd/" + zone_name + "/manual_duration_seconds/set"),
-                             1, kMaxWateringSeconds, 1, "s");
-        add_sensor_component(components, zone_name + "_state", zone_name + " State", unique_id(device_id_, zone_name + "_state"),
-                             build_topic("state/" + zone_name + "/runtime_state"), build_topic("attr/" + zone_name + "/runtime"));
-        add_sensor_component(components, zone_name + "_remaining", zone_name + " Remaining Seconds",
-                             unique_id(device_id_, zone_name + "_remaining"),
-                             build_topic("state/" + zone_name + "/remaining_seconds"), build_topic("attr/" + zone_name + "/runtime"), "s");
-        add_sensor_component(components, zone_name + "_active_schedule", zone_name + " Active Schedule Mode",
-                             unique_id(device_id_, zone_name + "_active_schedule"),
-                             build_topic("state/" + zone_name + "/active_schedule_mode"), build_topic("attr/" + zone_name + "/runtime"));
+        publish_button(zone_name + "_start", zone_name + " Start", build_topic("cmd/" + zone_name + "/start"));
+        publish_button(zone_name + "_stop", zone_name + " Stop", build_topic("cmd/" + zone_name + "/stop"));
+        publish_number(zone_name + "_manual_duration",
+                       zone_name + " Manual Duration",
+                       build_topic("state/" + zone_name + "/manual_duration_seconds"),
+                       build_topic("cmd/" + zone_name + "/manual_duration_seconds/set"),
+                       1, kMaxWateringSeconds, 1, "s");
+        publish_sensor(zone_name + "_state",
+                       zone_name + " State",
+                       build_topic("state/" + zone_name + "/runtime_state"),
+                       build_topic("attr/" + zone_name + "/runtime"));
+        publish_sensor(zone_name + "_remaining",
+                       zone_name + " Remaining Seconds",
+                       build_topic("state/" + zone_name + "/remaining_seconds"),
+                       build_topic("attr/" + zone_name + "/runtime"),
+                       "s");
+        publish_sensor(zone_name + "_active_schedule",
+                       zone_name + " Active Schedule Mode",
+                       build_topic("state/" + zone_name + "/active_schedule_mode"),
+                       build_topic("attr/" + zone_name + "/runtime"));
 
-        add_switch_component(components, zone_name + "_timer_enabled", zone_name + " Timer Enabled",
-                             unique_id(device_id_, zone_name + "_timer_enabled"),
-                             build_topic("state/" + zone_name + "/timer/enabled"),
-                             build_topic("cmd/" + zone_name + "/timer/enabled/set"));
-        add_text_component(components, zone_name + "_timer_days", zone_name + " Timer Days",
-                           unique_id(device_id_, zone_name + "_timer_days"),
-                           build_topic("state/" + zone_name + "/timer/days"),
-                           build_topic("cmd/" + zone_name + "/timer/days/set"));
+        publish_switch(zone_name + "_timer_enabled",
+                       zone_name + " Timer Enabled",
+                       build_topic("state/" + zone_name + "/timer/enabled"),
+                       build_topic("cmd/" + zone_name + "/timer/enabled/set"));
+        publish_text(zone_name + "_timer_days",
+                     zone_name + " Timer Days",
+                     build_topic("state/" + zone_name + "/timer/days"),
+                     build_topic("cmd/" + zone_name + "/timer/days/set"));
         for (int slot = 0; slot < 4; ++slot) {
             const auto key = zone_name + "_timer_start" + std::to_string(slot + 1);
-            add_text_component(components, key, zone_name + " Timer Start " + std::to_string(slot + 1), unique_id(device_id_, key),
-                               build_topic("state/" + zone_name + "/timer/start" + std::to_string(slot + 1)),
-                               build_topic("cmd/" + zone_name + "/timer/start" + std::to_string(slot + 1) + "/set"),
-                               kPattern);
+            publish_text(key,
+                         zone_name + " Timer Start " + std::to_string(slot + 1),
+                         build_topic("state/" + zone_name + "/timer/start" + std::to_string(slot + 1)),
+                         build_topic("cmd/" + zone_name + "/timer/start" + std::to_string(slot + 1) + "/set"),
+                         kPattern);
         }
-        add_number_component(components, zone_name + "_timer_run", zone_name + " Timer Run Seconds",
-                             unique_id(device_id_, zone_name + "_timer_run"),
-                             build_topic("state/" + zone_name + "/timer/run_seconds"),
-                             build_topic("cmd/" + zone_name + "/timer/run_seconds/set"),
-                             1, kMaxWateringSeconds, 1, "s");
-        add_button_component(components, zone_name + "_timer_apply", zone_name + " Timer Apply",
-                             unique_id(device_id_, zone_name + "_timer_apply"),
-                             build_topic("cmd/" + zone_name + "/timer/apply"));
-        add_sensor_component(components, zone_name + "_timer_apply_status", zone_name + " Timer Apply Status",
-                             unique_id(device_id_, zone_name + "_timer_apply_status"),
-                             build_topic("state/" + zone_name + "/timer/apply_status"),
-                             build_topic("attr/" + zone_name + "/timer"));
+        publish_number(zone_name + "_timer_run",
+                       zone_name + " Timer Run Seconds",
+                       build_topic("state/" + zone_name + "/timer/run_seconds"),
+                       build_topic("cmd/" + zone_name + "/timer/run_seconds/set"),
+                       1, kMaxWateringSeconds, 1, "s");
+        publish_button(zone_name + "_timer_apply", zone_name + " Timer Apply", build_topic("cmd/" + zone_name + "/timer/apply"));
+        publish_sensor(zone_name + "_timer_apply_status",
+                       zone_name + " Timer Apply Status",
+                       build_topic("state/" + zone_name + "/timer/apply_status"),
+                       build_topic("attr/" + zone_name + "/timer"));
 
-        add_switch_component(components, zone_name + "_cycling_enabled", zone_name + " Cycling Enabled",
-                             unique_id(device_id_, zone_name + "_cycling_enabled"),
-                             build_topic("state/" + zone_name + "/cycling/enabled"),
-                             build_topic("cmd/" + zone_name + "/cycling/enabled/set"));
-        add_text_component(components, zone_name + "_cycling_days", zone_name + " Cycling Days",
-                           unique_id(device_id_, zone_name + "_cycling_days"),
-                           build_topic("state/" + zone_name + "/cycling/days"),
-                           build_topic("cmd/" + zone_name + "/cycling/days/set"));
+        publish_switch(zone_name + "_cycling_enabled",
+                       zone_name + " Cycling Enabled",
+                       build_topic("state/" + zone_name + "/cycling/enabled"),
+                       build_topic("cmd/" + zone_name + "/cycling/enabled/set"));
+        publish_text(zone_name + "_cycling_days",
+                     zone_name + " Cycling Days",
+                     build_topic("state/" + zone_name + "/cycling/days"),
+                     build_topic("cmd/" + zone_name + "/cycling/days/set"));
         for (const auto &field : {"start1", "end1", "start2", "end2"}) {
             const auto key = zone_name + "_cycling_" + std::string(field);
-            add_text_component(components, key, zone_name + " Cycling " + std::string(field), unique_id(device_id_, key),
-                               build_topic("state/" + zone_name + "/cycling/" + field),
-                               build_topic("cmd/" + zone_name + "/cycling/" + field + std::string("/set")),
-                               kPattern);
+            publish_text(key,
+                         zone_name + " Cycling " + std::string(field),
+                         build_topic("state/" + zone_name + "/cycling/" + field),
+                         build_topic("cmd/" + zone_name + "/cycling/" + field + std::string("/set")),
+                         kPattern);
         }
-        add_number_component(components, zone_name + "_cycling_run", zone_name + " Cycling Run Seconds",
-                             unique_id(device_id_, zone_name + "_cycling_run"),
-                             build_topic("state/" + zone_name + "/cycling/run_seconds"),
-                             build_topic("cmd/" + zone_name + "/cycling/run_seconds/set"),
-                             1, kMaxWateringSeconds, 1, "s");
-        add_number_component(components, zone_name + "_cycling_soak", zone_name + " Cycling Soak Seconds",
-                             unique_id(device_id_, zone_name + "_cycling_soak"),
-                             build_topic("state/" + zone_name + "/cycling/soak_seconds"),
-                             build_topic("cmd/" + zone_name + "/cycling/soak_seconds/set"),
-                             0, kMaxWateringSeconds, 1, "s");
-        add_button_component(components, zone_name + "_cycling_apply", zone_name + " Cycling Apply",
-                             unique_id(device_id_, zone_name + "_cycling_apply"),
-                             build_topic("cmd/" + zone_name + "/cycling/apply"));
-        add_sensor_component(components, zone_name + "_cycling_apply_status", zone_name + " Cycling Apply Status",
-                             unique_id(device_id_, zone_name + "_cycling_apply_status"),
-                             build_topic("state/" + zone_name + "/cycling/apply_status"),
-                             build_topic("attr/" + zone_name + "/cycling"));
+        publish_number(zone_name + "_cycling_run",
+                       zone_name + " Cycling Run Seconds",
+                       build_topic("state/" + zone_name + "/cycling/run_seconds"),
+                       build_topic("cmd/" + zone_name + "/cycling/run_seconds/set"),
+                       1, kMaxWateringSeconds, 1, "s");
+        publish_number(zone_name + "_cycling_soak",
+                       zone_name + " Cycling Soak Seconds",
+                       build_topic("state/" + zone_name + "/cycling/soak_seconds"),
+                       build_topic("cmd/" + zone_name + "/cycling/soak_seconds/set"),
+                       0, kMaxWateringSeconds, 1, "s");
+        publish_button(zone_name + "_cycling_apply", zone_name + " Cycling Apply", build_topic("cmd/" + zone_name + "/cycling/apply"));
+        publish_sensor(zone_name + "_cycling_apply_status",
+                       zone_name + " Cycling Apply Status",
+                       build_topic("state/" + zone_name + "/cycling/apply_status"),
+                       build_topic("attr/" + zone_name + "/cycling"));
     }
+}
 
+void MqttBridge::publish_discovery_payload(const std::string &component, const std::string &object_id, cJSON *root) {
+    if (root == nullptr) {
+        return;
+    }
     char *serialized = cJSON_PrintUnformatted(root);
-    publish_topic(discovery_topic(), serialized, true);
-    cJSON_free(serialized);
+    if (serialized != nullptr) {
+        publish_topic(discovery_topic(component, object_id), serialized, true);
+        cJSON_free(serialized);
+    } else {
+        ESP_LOGE(kTag, "cJSON_PrintUnformatted failed for discovery component=%s object_id=%s",
+                 component.c_str(), object_id.c_str());
+    }
     cJSON_Delete(root);
 }
 
@@ -460,7 +684,7 @@ void MqttBridge::publish_cycling_state(const ZoneId zone) {
 }
 
 void MqttBridge::publish_topic(const std::string &topic, const std::string &payload, const bool retain) {
-    if (!connected_ || client_ == nullptr) {
+    if (!connected_.load() || client_ == nullptr) {
         return;
     }
     esp_mqtt_client_publish(client_, topic.c_str(), payload.c_str(), 0, 1, retain ? 1 : 0);
@@ -666,8 +890,8 @@ std::string MqttBridge::build_topic(const std::string &suffix) const {
     return base_topic_ + "/" + suffix;
 }
 
-std::string MqttBridge::discovery_topic() const {
-    return discovery_prefix_ + "/device/" + device_id_ + "/config";
+std::string MqttBridge::discovery_topic(const std::string &component, const std::string &object_id) const {
+    return discovery_prefix_ + "/" + component + "/" + unique_id(device_id_, object_id) + "/config";
 }
 
 }  // namespace bridge

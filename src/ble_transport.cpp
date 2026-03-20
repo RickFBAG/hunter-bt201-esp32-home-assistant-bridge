@@ -2,11 +2,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <utility>
 
 extern "C" {
-#include "esp_nimble_hci.h"
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -14,6 +14,7 @@ extern "C" {
 #include "freertos/semphr.h"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
+#include "host/ble_hs_adv.h"
 #include "host/ble_hs.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
@@ -30,15 +31,36 @@ namespace bridge {
 namespace {
 
 constexpr char kTag[] = "BleTransport";
-constexpr std::uint32_t kScanTimeoutMs = 5000;
+constexpr std::uint32_t kScanTimeoutMs = 8000;
+constexpr std::uint32_t kScanCancelGraceMs = 500;
 constexpr std::uint16_t kCustomServiceUuid16 = 0xFF80;
 constexpr std::uint16_t kBatteryServiceUuid16 = 0x180F;
 
-std::string normalize_mac(std::string value) {
+struct ParsedAdvertisement {
+    std::string name;
+    bool has_custom_service{false};
+};
+
+std::string normalize_upper(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
         return static_cast<char>(std::toupper(ch));
     });
     return value;
+}
+
+std::string format_mac(const ble_addr_t &address) {
+    char buffer[18];
+    std::snprintf(
+        buffer,
+        sizeof(buffer),
+        "%02X:%02X:%02X:%02X:%02X:%02X",
+        address.val[5],
+        address.val[4],
+        address.val[3],
+        address.val[2],
+        address.val[1],
+        address.val[0]);
+    return buffer;
 }
 
 std::vector<std::uint8_t> mbuf_to_vector(os_mbuf *buffer) {
@@ -53,11 +75,31 @@ std::vector<std::uint8_t> mbuf_to_vector(os_mbuf *buffer) {
     return output;
 }
 
+ParsedAdvertisement parse_advertisement(const ble_gap_disc_desc &disc) {
+    ParsedAdvertisement parsed{};
+    ble_hs_adv_fields fields{};
+    if (ble_hs_adv_parse_fields(&fields, disc.data, disc.length_data) != 0) {
+        return parsed;
+    }
+
+    if (fields.name != nullptr && fields.name_len > 0) {
+        parsed.name.assign(reinterpret_cast<const char *>(fields.name), fields.name_len);
+    }
+
+    for (std::uint8_t index = 0; index < fields.num_uuids16; ++index) {
+        if (fields.uuids16[index].value == kCustomServiceUuid16) {
+            parsed.has_custom_service = true;
+            break;
+        }
+    }
+    return parsed;
+}
+
 }  // namespace
 
 BleTransport *BleTransport::instance_ = nullptr;
 
-BleTransport::BleTransport() : target_mac_(normalize_mac(config::kHunterMac)) {
+BleTransport::BleTransport() : target_mac_(normalize_upper(config::kHunterMac)), target_name_hint_(normalize_upper(config::kHunterNameHint)) {
     instance_ = this;
 }
 
@@ -99,7 +141,6 @@ esp_err_t BleTransport::init() {
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_ERROR_CHECK(esp_nimble_hci_and_controller_init());
     nimble_port_init();
     ble_svc_gap_init();
     ble_svc_gatt_init();
@@ -130,12 +171,15 @@ bool BleTransport::ensure_ble_ready() {
 bool BleTransport::scan_for_target() {
     xSemaphoreTake(static_cast<SemaphoreHandle_t>(scan_done_sem_), 0);
     target_found_ = false;
+    fallback_found_ = false;
+    fallback_score_ = 0;
+    std::memset(&fallback_addr_, 0, sizeof(fallback_addr_));
 
     ble_gap_disc_params params{};
     params.itvl = 0x0010;
     params.window = 0x0010;
     params.passive = 0;
-    params.filter_duplicates = 1;
+    params.filter_duplicates = 0;
 
     const auto rc = ble_gap_disc(own_addr_type_, static_cast<int32_t>(kScanTimeoutMs), &params, &BleTransport::gap_event, this);
     if (rc != 0) {
@@ -147,6 +191,20 @@ bool BleTransport::scan_for_target() {
         set_error("scan timeout");
         ble_gap_disc_cancel();
         return false;
+    }
+
+    if (!target_found_ && fallback_found_) {
+        peer_addr_ = fallback_addr_;
+        target_found_ = true;
+        ESP_LOGI(kTag, "using fallback BLE scan match at %s", format_mac(peer_addr_).c_str());
+    }
+
+    if (target_found_ && ble_gap_disc_active()) {
+        ble_gap_disc_cancel();
+        const auto cancel_deadline = esp_timer_get_time() + (static_cast<std::int64_t>(kScanCancelGraceMs) * 1000);
+        while (ble_gap_disc_active() && esp_timer_get_time() < cancel_deadline) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
     }
 
     if (!target_found_) {
@@ -230,7 +288,9 @@ bool BleTransport::discover_service_range(const std::uint16_t service_uuid, std:
     last_status_ = 0;
     xSemaphoreTake(static_cast<SemaphoreHandle_t>(gatt_sem_), 0);
 
-    auto uuid = BLE_UUID16_INIT(service_uuid);
+    ble_uuid16_t uuid{};
+    uuid.u.type = BLE_UUID_TYPE_16;
+    uuid.value = service_uuid;
     const auto rc = ble_gattc_disc_svc_by_uuid(conn_handle_, &uuid.u, &BleTransport::service_discovery_cb, this);
     if (rc != 0) {
         set_error("service discovery call failed");
@@ -489,16 +549,57 @@ int BleTransport::gap_event(struct ble_gap_event *event, void *arg) {
 
     switch (event->type) {
         case BLE_GAP_EVENT_DISC: {
-            char address_buffer[BLE_ADDR_STR_LEN] = {};
-            ble_addr_to_str(&event->disc.addr, address_buffer);
-            if (normalize_mac(address_buffer) == self->target_mac_) {
+            const auto discovered_mac = format_mac(event->disc.addr);
+            if (discovered_mac == self->target_mac_) {
                 self->peer_addr_ = event->disc.addr;
                 self->target_found_ = true;
+                ESP_LOGI(kTag, "found exact Hunter MAC during scan: %s", discovered_mac.c_str());
+                xSemaphoreGive(static_cast<SemaphoreHandle_t>(self->scan_done_sem_));
                 ble_gap_disc_cancel();
+                return 0;
+            }
+
+            const auto advertisement = parse_advertisement(event->disc);
+            const auto normalized_name = normalize_upper(advertisement.name);
+            const bool name_match =
+                !self->target_name_hint_.empty() && !normalized_name.empty() &&
+                normalized_name.find(self->target_name_hint_) != std::string::npos;
+            const bool service_match = advertisement.has_custom_service;
+            const int score = (name_match ? 2 : 0) + (service_match ? 1 : 0);
+
+            if (score >= 3) {
+                self->peer_addr_ = event->disc.addr;
+                self->target_found_ = true;
+                ESP_LOGI(
+                    kTag,
+                    "found Hunter fallback match addr=%s name='%s' service_ff80=%d",
+                    discovered_mac.c_str(),
+                    advertisement.name.empty() ? "-" : advertisement.name.c_str(),
+                    service_match ? 1 : 0);
+                xSemaphoreGive(static_cast<SemaphoreHandle_t>(self->scan_done_sem_));
+                ble_gap_disc_cancel();
+                return 0;
+            }
+
+            if (score > self->fallback_score_) {
+                self->fallback_addr_ = event->disc.addr;
+                self->fallback_found_ = true;
+                self->fallback_score_ = score;
+                ESP_LOGI(
+                    kTag,
+                    "stored BLE candidate addr=%s name='%s' name_match=%d service_ff80=%d",
+                    discovered_mac.c_str(),
+                    advertisement.name.empty() ? "-" : advertisement.name.c_str(),
+                    name_match ? 1 : 0,
+                    service_match ? 1 : 0);
             }
             return 0;
         }
         case BLE_GAP_EVENT_DISC_COMPLETE:
+            if (!self->target_found_ && self->fallback_found_) {
+                self->peer_addr_ = self->fallback_addr_;
+                self->target_found_ = true;
+            }
             xSemaphoreGive(static_cast<SemaphoreHandle_t>(self->scan_done_sem_));
             return 0;
         case BLE_GAP_EVENT_CONNECT:
@@ -564,7 +665,7 @@ int BleTransport::characteristic_discovery_cb(
     }
 
     if (error->status == 0 && chr != nullptr) {
-        const auto uuid16 = ble_uuid_u16(chr->uuid);
+        const auto uuid16 = ble_uuid_u16(&chr->uuid.u);
         switch (uuid16) {
             case 0xFF81: self->handles_.ff81 = chr->val_handle; break;
             case 0xFF82: self->handles_.ff82 = chr->val_handle; break;

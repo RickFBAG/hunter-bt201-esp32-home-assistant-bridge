@@ -11,6 +11,7 @@
 #include "bridge_types.h"
 
 extern "C" {
+#include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "host/ble_gap.h"
@@ -111,11 +112,15 @@ class BleTransport {
     std::uint8_t own_addr_type_{0};
     std::uint16_t conn_handle_{0xFFFF};
     std::string target_mac_;
+    std::string target_name_hint_;
     std::string last_error_;
     GattHandles handles_{};
 
-    struct ble_addr_t peer_addr_{};
+    ble_addr_t peer_addr_{};
     bool target_found_{false};
+    ble_addr_t fallback_addr_{};
+    bool fallback_found_{false};
+    int fallback_score_{0};
 
     SemaphoreHandle_t scan_done_sem_{nullptr};
     SemaphoreHandle_t connect_sem_{nullptr};

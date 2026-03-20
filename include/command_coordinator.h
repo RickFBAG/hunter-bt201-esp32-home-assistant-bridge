@@ -6,7 +6,9 @@
 #include "esp_err.h"
 #include "esp_timer.h"
 
+#include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #include "ble_transport.h"
@@ -19,6 +21,12 @@ class BridgeEventSink {
    public:
     virtual ~BridgeEventSink() = default;
     virtual void on_state_changed() = 0;
+};
+
+struct BleTelemetrySnapshot {
+    std::int64_t last_attempt_ms{0};
+    std::int64_t last_success_ms{0};
+    FixedString<64> last_status{};
 };
 
 class CommandCoordinator {
@@ -42,6 +50,7 @@ class CommandCoordinator {
 
     const PersistedBridgeState &state() const;
     bool is_busy() const;
+    BleTelemetrySnapshot ble_telemetry() const;
 
    private:
     enum class CommandType : std::uint8_t {
@@ -74,6 +83,7 @@ class CommandCoordinator {
     bool open_session();
     void close_session();
     void update_battery_from_session();
+    void set_ble_status(std::string_view status, bool connected_successfully);
     void mark_running(ZoneId zone, std::uint32_t remaining_seconds);
     void mark_idle_all(std::string_view reason);
     void mark_zone_status(ZoneId zone, ZoneRuntimeStatus status, std::string_view error = {});
@@ -87,10 +97,14 @@ class CommandCoordinator {
     QueueHandle_t queue_{nullptr};
     TaskHandle_t task_handle_{nullptr};
     esp_timer_handle_t remaining_timer_{nullptr};
+    SemaphoreHandle_t telemetry_mutex_{nullptr};
 
     std::atomic<bool> busy_{false};
     std::atomic<bool> urgent_stop_requested_{false};
     std::atomic<bool> transport_drop_detected_{false};
+    std::int64_t last_ble_attempt_ms_{0};
+    std::int64_t last_ble_success_ms_{0};
+    FixedString<64> last_ble_status_{};
 };
 
 }  // namespace bridge

@@ -20,6 +20,11 @@ inline constexpr const char *kDeviceName = BRIDGE_DEVICE_NAME;
 inline constexpr const char *kDeviceModel = BRIDGE_DEVICE_MODEL;
 inline constexpr const char *kDeviceManufacturer = BRIDGE_DEVICE_MANUFACTURER;
 inline constexpr const char *kHunterMac = BRIDGE_HUNTER_MAC;
+#ifdef BRIDGE_HUNTER_NAME_HINT
+inline constexpr const char *kHunterNameHint = BRIDGE_HUNTER_NAME_HINT;
+#else
+inline constexpr const char *kHunterNameHint = "Hunter BTT";
+#endif
 inline constexpr const char *kHunterPasscode = BRIDGE_HUNTER_PASSCODE;
 inline constexpr unsigned long long kBatteryRefreshIntervalMs = BRIDGE_BATTERY_REFRESH_INTERVAL_MS;
 

@@ -3,6 +3,7 @@
 ## 1. Install Prerequisites
 
 - Install VS Code plus the PlatformIO extension, or install PlatformIO Core separately.
+- Use the `waveshare_esp32_c6_touch` PlatformIO environment for the Waveshare ESP32-C6 Touch AMOLED 1.8 board.
 - Ensure you have an MQTT broker reachable from both the ESP32 and Home Assistant.
 - Ensure the Hunter clock is already correct in the phone app before using schedules.
 
@@ -22,6 +23,12 @@
    - `BRIDGE_HUNTER_MAC`
 
 Leave `BRIDGE_HUNTER_PASSCODE` empty in v1 unless you are deliberately experimenting with `FF81`. The current firmware does not use `FF81` as an unlock flow.
+
+`BRIDGE_HUNTER_NAME_HINT` is optional, but the default `Hunter BTT` value is useful as a scan fallback if the Hunter changes its resolvable address behavior.
+
+Use an IP address or normal DNS hostname for `BRIDGE_MQTT_URI`, for example `mqtt://192.168.50.10`. Do not use `mqtt://homeassistant.local` in v1; this firmware does not perform mDNS `.local` resolution for the broker address.
+
+Do not use an IPv6 link-local broker URI such as `mqtt://fe80::...` either. ESP-IDF expects IPv6 URIs in bracket form, and link-local addresses are not a good fit here anyway. For this bridge, use IPv4 for the MQTT broker.
 
 ## 3. Build And Flash
 
@@ -53,6 +60,7 @@ pio device monitor -b 115200
    - cycling controls
    - battery sensor
    - bridge health sensor
+   - a passive AMOLED status screen that stays asleep until a hardware button wakes it
 
 ## 5. First Validation
 
@@ -70,4 +78,3 @@ pio device monitor -b 115200
 - A schedule is only pushed to the Hunter device when you press the matching `Apply` button.
 - `FF84` time sync is intentionally not written in v1.
 - If a schedule write or read-back does not match, the apply status sensor reports failure and the firmware does not pretend success.
-

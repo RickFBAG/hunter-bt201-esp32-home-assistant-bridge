@@ -291,9 +291,9 @@ std::string format_time_string(const std::int32_t seconds) {
     }
 
     char buffer[16];
-    const auto hours = seconds / 3600;
-    const auto minutes = (seconds % 3600) / 60;
-    const auto secs = seconds % 60;
+    const int hours = static_cast<int>(seconds / 3600);
+    const int minutes = static_cast<int>((seconds % 3600) / 60);
+    const int secs = static_cast<int>(seconds % 60);
     std::snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d", hours, minutes, secs);
     return buffer;
 }

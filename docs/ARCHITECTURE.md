@@ -13,7 +13,7 @@ This was chosen because it is the simplest fully local option with the least lon
 ## Firmware Layers
 
 - `BleTransport`
-  - Scans for the configured Hunter MAC.
+  - Scans for the configured Hunter MAC first, then falls back to the configured Hunter name hint and `FF80` service advertisement if needed.
   - Connects with up to 2 attempts.
   - Discovers characteristic handles.
   - Enables notifications on `FF82`, `FF8A`, and `FF8F`.
@@ -25,7 +25,7 @@ This was chosen because it is the simplest fully local option with the least lon
 - `StateStore`
   - Stores draft settings and last confirmed schedule bytes in NVS.
   - Marks runtime state stale on boot.
-  - Never persists “watering is currently active” across reboot.
+  - Never persists "watering is currently active" across reboot.
 - `CommandCoordinator`
   - Owns retries, timeouts, state transitions, stop priority, and fail-safe behavior.
   - Keeps draft state separate from confirmed state.
@@ -33,6 +33,11 @@ This was chosen because it is the simplest fully local option with the least lon
   - Publishes Home Assistant discovery.
   - Maps MQTT commands to coordinator actions.
   - Publishes entity state, attributes, and inferred/proven origin metadata.
+- `StatusDisplay`
+  - Drives the built-in 1.8 inch AMOLED with passive local status only.
+  - Renders existing Wi-Fi, MQTT, BLE, Hunter battery, board battery, zone, and bridge-health state.
+  - Sleeps by default, wakes from the hardware buttons, and never changes Hunter behavior.
+  - Never triggers BLE work by itself and never adds extra Hunter connection attempts.
 
 ## Data Flow
 
@@ -106,4 +111,3 @@ This was chosen because it is the simplest fully local option with the least lon
   - Zone 1 cycling: `FF86` config + `FF88` block
 
 The firmware exposes inferred paths, but Home Assistant attributes flag them as inferred and apply succeeds only if read-back matches exactly.
-

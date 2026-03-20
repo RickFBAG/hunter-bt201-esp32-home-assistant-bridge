@@ -37,11 +37,20 @@ CommandCoordinator::~CommandCoordinator() {
         esp_timer_delete(remaining_timer_);
         remaining_timer_ = nullptr;
     }
+    if (telemetry_mutex_ != nullptr) {
+        vSemaphoreDelete(telemetry_mutex_);
+        telemetry_mutex_ = nullptr;
+    }
 }
 
 esp_err_t CommandCoordinator::init() {
     queue_ = xQueueCreate(8, sizeof(Command));
     if (queue_ == nullptr) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    telemetry_mutex_ = xSemaphoreCreateMutex();
+    if (telemetry_mutex_ == nullptr) {
         return ESP_ERR_NO_MEM;
     }
 
@@ -166,6 +175,18 @@ bool CommandCoordinator::is_busy() const {
     return busy_.load();
 }
 
+BleTelemetrySnapshot CommandCoordinator::ble_telemetry() const {
+    BleTelemetrySnapshot snapshot{};
+    if (telemetry_mutex_ != nullptr) {
+        xSemaphoreTake(static_cast<SemaphoreHandle_t>(telemetry_mutex_), portMAX_DELAY);
+        snapshot.last_attempt_ms = last_ble_attempt_ms_;
+        snapshot.last_success_ms = last_ble_success_ms_;
+        snapshot.last_status = last_ble_status_;
+        xSemaphoreGive(static_cast<SemaphoreHandle_t>(telemetry_mutex_));
+    }
+    return snapshot;
+}
+
 bool CommandCoordinator::enqueue_command(const Command command, const bool high_priority) {
     BaseType_t result = pdFALSE;
     if (high_priority) {
@@ -212,10 +233,10 @@ void CommandCoordinator::task_loop() {
                 break;
         }
 
-        if (!success && command.type != CommandType::Stop) {
-            state_store_.set_bridge_error("command_failed");
-        } else {
+        if (success) {
             state_store_.clear_bridge_error();
+        } else if (fixed_string_to_string(state_store_.state().bridge_error).empty()) {
+            state_store_.set_bridge_error("command_failed");
         }
 
         state_store_.save();
@@ -237,16 +258,24 @@ std::int64_t CommandCoordinator::now_ms() const {
 
 void CommandCoordinator::on_transport_disconnect(const int reason) {
     transport_drop_detected_.store(true);
+    set_ble_status("ble_disconnect", false);
     fail_safe_reset("ble_disconnect", true);
     ESP_LOGW(kTag, "transport disconnect reason=%d", reason);
 }
 
 bool CommandCoordinator::open_session() {
     transport_drop_detected_.store(false);
+    if (telemetry_mutex_ != nullptr) {
+        xSemaphoreTake(static_cast<SemaphoreHandle_t>(telemetry_mutex_), portMAX_DELAY);
+        last_ble_attempt_ms_ = now_ms();
+        xSemaphoreGive(static_cast<SemaphoreHandle_t>(telemetry_mutex_));
+    }
     if (!transport_.connect()) {
+        set_ble_status(transport_.last_error(), false);
         state_store_.set_bridge_error(transport_.last_error());
         return false;
     }
+    set_ble_status("connected", true);
     update_battery_from_session();
     return true;
 }
@@ -260,7 +289,23 @@ void CommandCoordinator::update_battery_from_session() {
     if (transport_.read_battery_percent(battery)) {
         state_store_.state().battery_percent = battery;
         state_store_.state().battery_updated_epoch_ms = now_ms();
+        set_ble_status("battery_read_ok", true);
+    } else {
+        set_ble_status("battery_read_failed", false);
     }
+}
+
+void CommandCoordinator::set_ble_status(const std::string_view status, const bool connected_successfully) {
+    if (telemetry_mutex_ == nullptr) {
+        return;
+    }
+
+    xSemaphoreTake(static_cast<SemaphoreHandle_t>(telemetry_mutex_), portMAX_DELAY);
+    set_fixed_string(last_ble_status_, status);
+    if (connected_successfully) {
+        last_ble_success_ms_ = now_ms();
+    }
+    xSemaphoreGive(static_cast<SemaphoreHandle_t>(telemetry_mutex_));
 }
 
 bool CommandCoordinator::perform_start(const ZoneId zone) {
@@ -277,6 +322,7 @@ bool CommandCoordinator::perform_start(const ZoneId zone) {
         const bool success = perform_start_attempt(zone, requested_seconds);
         close_session();
         if (success) {
+            set_ble_status("start_confirmed", true);
             return true;
         }
         perform_stop(zone);
@@ -285,6 +331,7 @@ bool CommandCoordinator::perform_start(const ZoneId zone) {
     state_store_.zone(zone).runtime_status = ZoneRuntimeStatus::Unknown;
     state_store_.zone(zone).confirmed_state_stale = true;
     state_store_.set_zone_error(zone, "start_confirmation_failed");
+    set_ble_status("start_confirmation_failed", false);
     return false;
 }
 
@@ -361,10 +408,12 @@ bool CommandCoordinator::perform_stop(const ZoneId requested_zone) {
         close_session();
         if (success) {
             mark_idle_all("stop_confirmed");
+            set_ble_status("stop_confirmed", true);
             return true;
         }
     }
 
+    set_ble_status("stop_confirmation_failed", false);
     fail_safe_reset("stop_confirmation_failed", true);
     return false;
 }
@@ -443,8 +492,10 @@ bool CommandCoordinator::perform_apply_schedule(const ZoneId zone, const ApplyTa
             std::copy(block.begin(), block.end(), zone_state.last_timer_block_bytes.begin());
             zone_state.confirmed_state_stale = false;
             state_store_.set_apply_status(zone, "applied");
+            set_ble_status("timer_applied", true);
         } else {
             state_store_.set_apply_status(zone, "readback_mismatch");
+            set_ble_status("timer_readback_mismatch", false);
         }
     } else {
         std::array<std::uint8_t, 18> block{};
@@ -472,8 +523,10 @@ bool CommandCoordinator::perform_apply_schedule(const ZoneId zone, const ApplyTa
             std::copy(block.begin(), block.end(), zone_state.last_cycling_block_bytes.begin());
             zone_state.confirmed_state_stale = false;
             state_store_.set_apply_status(zone, "applied");
+            set_ble_status("cycling_applied", true);
         } else {
             state_store_.set_apply_status(zone, "readback_mismatch");
+            set_ble_status("cycling_readback_mismatch", false);
         }
     }
 
@@ -483,9 +536,11 @@ bool CommandCoordinator::perform_apply_schedule(const ZoneId zone, const ApplyTa
 
 bool CommandCoordinator::perform_refresh_battery() {
     if (!open_session()) {
+        set_ble_status("battery_session_failed", false);
         return false;
     }
     close_session();
+    set_ble_status("battery_refresh_ok", true);
     return true;
 }
 
