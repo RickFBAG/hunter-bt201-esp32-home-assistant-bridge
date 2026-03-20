@@ -1,8 +1,8 @@
-# Hunter BT201 ESP32 Home Assistant Bridge
+# Hunter BTT201 ESP32 Home Assistant Bridge
 
-Local ESP32 bridge for the Hunter BT201 / Hunter BTT irrigation controller.
+Local ESP32 bridge for the Hunter BTT201 / Hunter BTT irrigation controller.
 
-This project lets Home Assistant control a Hunter BT201 over your local network by using an ESP32 as the only BLE client. The Hunter stays a BLE-only device, but Home Assistant gets clean local control through MQTT discovery.
+This project lets Home Assistant control a Hunter BTT201 over your local network by using an ESP32 as the only BLE client. The Hunter stays a BLE-only device, but Home Assistant gets clean local control through MQTT discovery.
 
 ## What This Project Does
 
@@ -16,7 +16,7 @@ This project lets Home Assistant control a Hunter BT201 over your local network 
 
 ## Hardware Target
 
-- Hunter BT201 / Hunter BTT
+- Hunter BTT201 / Hunter BTT
 - Waveshare ESP32-C6 Touch AMOLED 1.8
 - Home Assistant OS or any Home Assistant instance with MQTT enabled
 - Local MQTT broker, typically Mosquitto

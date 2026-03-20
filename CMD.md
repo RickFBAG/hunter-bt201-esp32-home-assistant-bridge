@@ -1,7 +1,7 @@
-I have a Hunter BT201 watering system that only works over BLE. I want to build a local BLE-to-WiFi bridge with an ESP32 so I can control it from Home Assistant.
+I have a Hunter BTT201 watering system that only works over BLE. I want to build a local BLE-to-WiFi bridge with an ESP32 so I can control it from Home Assistant.
 
 Context:
-- The irrigation device is a Hunter BT201 / Hunter BTT.
+- The irrigation device is a Hunter BTT201 / Hunter BTT.
 - It currently only works when I am physically close to it over BLE.
 - I want to use an ESP32 as the BLE client that talks to the Hunter device.
 - I want Home Assistant to control the ESP32 over my local network.
@@ -170,7 +170,7 @@ Do not spend time on any display code, LVGL, touch interaction, or local UI.
 What I want from you in the output:
 Please do all of the following:
 1. Propose the final architecture and explain why
-2. Explain the data flow from Home Assistant to ESP32 to Hunter BT201
+2. Explain the data flow from Home Assistant to ESP32 to Hunter BTT201
 3. Explain how command confirmation and retries work
 4. Explain how fail-safe behavior works
 5. Provide the complete code

@@ -120,7 +120,7 @@ void init_wifi() {
 }  // namespace
 
 extern "C" void app_main(void) {
-    ESP_LOGI(kTag, "Starting hunter BT201 bridge");
+    ESP_LOGI(kTag, "Starting hunter BTT201 bridge");
     g_wifi_events = xEventGroupCreate();
 
     static bridge::StateStore state_store;

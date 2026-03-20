@@ -12,7 +12,7 @@
 #define BRIDGE_DISCOVERY_PREFIX "homeassistant"
 #define BRIDGE_BASE_TOPIC "hunter_btt_bridge/hunter_bridge"
 #define BRIDGE_DEVICE_ID "hunter_bridge"
-#define BRIDGE_DEVICE_NAME "Hunter BT201 Bridge"
+#define BRIDGE_DEVICE_NAME "Hunter BTT201 Bridge"
 #define BRIDGE_DEVICE_MODEL "Waveshare ESP32-C6 Touch AMOLED 1.8"
 #define BRIDGE_DEVICE_MANUFACTURER "Waveshare"
 
